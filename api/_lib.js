@@ -60,7 +60,7 @@ async function load() {
 }
 
 async function mutate(fn) {
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 9; i++) {
     const { data, etag } = await load();
     const result = await fn(data);
     if (result && result.skip) return result.value;
@@ -75,7 +75,7 @@ async function mutate(fn) {
       });
       return result;
     } catch (e) {
-      if (e instanceof BlobPreconditionFailedError || /precondition|etag/i.test(String(e && e.message))) { await new Promise((r) => setTimeout(r, 40 + Math.random() * 120)); continue; }
+      if (e instanceof BlobPreconditionFailedError || /precondition|etag/i.test(String(e && e.message))) { await new Promise((r) => setTimeout(r, 120 * (i + 1) + Math.random() * 150)); continue; }
       throw e;
     }
   }

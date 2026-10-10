@@ -841,7 +841,7 @@ async function sync() {
         : await api('/api/tasks?id=' + encodeURIComponent(q.id), { method: 'DELETE' });
       if (r.status === 401) return lock('That key isn’t valid any more. Use your latest setup link.');
       if (r.status === 503) return setMode('local');
-      if (!r.ok && r.status >= 500) throw new Error('server');
+      if (r.status === 409 || r.status === 429 || r.status >= 500) { setTimeout(sync, 2500); throw new Error('retry'); }
       if (!r.ok && r.status !== 404) console.warn('dropping bad write', await r.text());
       S.queue.shift(); persist();
     }
