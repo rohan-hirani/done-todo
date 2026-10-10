@@ -16,7 +16,7 @@
 <link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
-<link rel="stylesheet" href="/styles.css?v=4">
+<link rel="stylesheet" href="/styles.css?v=5">
 </head>
 <body>
 <a class="skip" href="#board">Skip to tasks</a>
@@ -45,6 +45,9 @@
       <span>Install</span>
     </button>
     <button class="icon-btn only-mobile" id="viewBtn" aria-label="Switch view" title="Focus / overview"></button>
+    <button class="icon-btn" id="insightsBtn" aria-label="Insights" title="Insights">
+      <svg viewBox="0 0 24 24"><path d="M5 20V11m7 9V5m7 15v-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
     <button class="icon-btn" id="syncBtn" aria-label="Sync status" title="Sync"><span class="dot" id="syncDot"></span></button>
     <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -107,6 +110,11 @@
   <div class="row"><button class="ghost" data-close>Close</button><button class="primary" id="syncNow">Sync now</button></div>
 </dialog>
 
+<dialog id="insights" class="sheet insights">
+  <div class="ins-head"><h2>Insights</h2><button class="ghost" data-close>Close</button></div>
+  <div id="insBody"></div>
+</dialog>
+
 <dialog id="settings" class="sheet">
   <h2>Settings</h2>
   <label class="toggle"><span>Sound<small>A soft pop when you finish something</small></span><input type="checkbox" id="setSound"></label>
@@ -135,6 +143,6 @@
   <div class="row"><button class="primary" data-close>Close</button></div>
 </dialog>
 
-<script type="module" src="/app.js?v=4"></script>
+<script type="module" src="/app.js?v=5"></script>
 </body>
 </html>

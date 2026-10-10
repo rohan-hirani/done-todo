@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { authed, configured, load, mutate, cors, json, readBody, parseDate, UUID } = require('./_lib');
+const { authed, configured, load, mutate, cors, json, readBody, parseDate, dateOrNull, normalize, UUID } = require('./_lib');
 
 const validIso = (v) => { const d = new Date(v); return v && !isNaN(d) ? d.toISOString() : null; };
 
@@ -22,6 +22,9 @@ function fields(b, { partial }) {
     out.position = p;
   }
   if (b.pinned !== undefined) out.pinned = !!b.pinned;
+  if (b.planned_date !== undefined) out.planned_date = dateOrNull(b.planned_date);
+  if (b.original_date !== undefined) out.original_date = dateOrNull(b.original_date);
+  if (b.rollovers !== undefined) out.rollovers = Math.max(0, Math.min(10000, parseInt(b.rollovers, 10) || 0));
   if (typeof b.source === 'string') out.source = b.source.slice(0, 40);
   return out;
 }
@@ -43,6 +46,7 @@ module.exports = async (req, res) => {
     const id = req.query && req.query.id;
     if (req.method === 'GET') {
       const { data } = await load();
+      if (normalize(data)) await mutate(() => true).catch(() => {});   // persist rollover (mutate normalizes before fn); best-effort
       const tasks = Object.values(data.tasks).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
       return json(res, 200, { tasks });
     }
@@ -63,7 +67,10 @@ module.exports = async (req, res) => {
         delete data.deleted[tid];
         const t = {
           id: tid, title: f.title, date: f.date, done: f.done ?? false, done_at: f.done_at ?? null,
-          pinned: f.pinned ?? !!(old && old.pinned), position: f.position ?? Date.now(), created_at: (upsert && validIso(b.created_at)) || (old && old.created_at) || now,
+          pinned: f.pinned ?? !!(old && old.pinned),
+          planned_date: f.planned_date !== undefined ? f.planned_date : old ? (f.date !== old.date ? f.date : old.planned_date ?? f.date) : f.date,
+          original_date: f.original_date !== undefined ? f.original_date : old && f.date === old.date ? old.original_date ?? null : null,
+          rollovers: f.rollovers ?? (old ? old.rollovers || 0 : 0), position: f.position ?? Date.now(), created_at: (upsert && validIso(b.created_at)) || (old && old.created_at) || now,
           updated_at: stamp, source: f.source || (old && old.source) || (upsert ? 'app' : 'api'),
         };
         data.tasks[tid] = t;
@@ -78,7 +85,8 @@ module.exports = async (req, res) => {
       const task = await mutate((data) => {
         const old = data.tasks[id];
         if (!old) return { skip: true, value: null };
-        return (data.tasks[id] = { ...old, ...f, updated_at: new Date().toISOString() });
+        const moved = f.date !== undefined && f.date !== old.date;
+        return (data.tasks[id] = { ...old, ...f, ...(moved ? { planned_date: f.planned_date !== undefined ? f.planned_date : f.date, original_date: f.original_date !== undefined ? f.original_date : null } : {}), updated_at: new Date().toISOString() });
       });
       return task ? json(res, 200, { task }) : json(res, 404, { error: 'not found' });
     }

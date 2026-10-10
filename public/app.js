@@ -58,7 +58,7 @@ function put(task) {
 function addTask(title, date) {
   title = title.trim();
   if (!title) return null;
-  const t = { id: uid(), title, date, done: false, done_at: null, pinned: false, position: Date.now(), created_at: nowIso(), updated_at: nowIso(), source: 'app' };
+  const t = { id: uid(), title, date, planned_date: date, original_date: null, rollovers: 0, done: false, done_at: null, pinned: false, position: Date.now(), created_at: nowIso(), updated_at: nowIso(), source: 'app' };
   put(t);
   return t;
 }
@@ -70,6 +70,21 @@ function removeTask(id) {
   S.queue.push({ t: 'del', id });
   persist(); render(); scheduleFlush();
   return t;
+}
+
+/* ───────────── auto-rollover (mirrors the server; midnight-safe) ───────────── */
+const dayDiff = (a, b) => Math.round((fromKey(b) - fromKey(a)) / 86400000);
+function rollLocal() {
+  const today = todayKey();
+  let changed = false;
+  for (const t of Object.values(S.tasks)) {
+    if (!t.done && t.date && t.date < today) {
+      if (!t.original_date) t.original_date = t.date;
+      t.rollovers = (t.rollovers || 0) + dayDiff(t.date, today);
+      t.date = today; changed = true;
+    }
+  }
+  if (changed) persist();
 }
 
 /* ───────────── derived ───────────── */
@@ -144,7 +159,7 @@ function buildBoard() {
   observeActive();
 }
 
-const taskSig = (t, key) => [t.title, t.done, t.date, t.pinned, key === todayKey() && t.date && t.date < key ? t.date : ''].join('\u0001');
+const taskSig = (t, key) => [t.title, t.done, t.date, t.pinned, key === todayKey() ? (t.original_date || '') + (t.date < key ? t.date : '') + (t.rollovers || 0) : ''].join('\u0001');
 function makeLi(t) {
   const li = document.createElement('li');
   li.className = 'task';
@@ -159,7 +174,8 @@ function makeLi(t) {
   return li;
 }
 function updateLi(li, t, key) {
-  const carried = key === todayKey() && t.date && t.date < key;
+  const from = key === todayKey() ? (t.date && t.date < key ? t.date : t.original_date && t.original_date < key ? t.original_date : null) : null;
+  const carried = !!from;
   const sig = taskSig(t, key);
   li.classList.toggle('done', t.done);
   li.classList.toggle('pinned', !!t.pinned && !t.done);
@@ -170,10 +186,11 @@ function updateLi(li, t, key) {
   $('.act-star span', li).textContent = t.pinned ? 'Unstar' : 'Top 3';
   const c = $('.carry', li);
   c.hidden = !carried;
-  if (carried) c.textContent = 'Carried over from ' + (t.date === addDays(key, -1) ? 'yesterday' : fmt(t.date, { weekday: 'short', month: 'short', day: 'numeric' }));
+  if (carried) c.textContent = 'Carried over from ' + (from === addDays(key, -1) ? 'yesterday' : fmt(from, { weekday: 'short', month: 'short', day: 'numeric' })) + ((t.rollovers || 0) > 1 ? ` · ${t.rollovers} days` : '');
 }
 
 function render() {
+  rollLocal();
   buildBoard();
   document.body.classList.toggle('view-focus', S.view === 'focus');
   document.body.classList.toggle('view-overview', S.view !== 'focus');
@@ -336,7 +353,7 @@ function closeMenu(refocus = true) {
 }
 function moveTo(id, date) {
   const t = S.tasks[id];
-  if (t) put({ ...t, date, position: Date.now() });
+  if (t) put({ ...t, date, ...(date !== t.date ? { planned_date: date, original_date: null } : {}), position: Date.now() });
 }
 function deleteWithUndo(id) {
   const li = $(`.task[data-id="${id}"]`);
@@ -542,7 +559,8 @@ function endDrag() {
       const pos = pp == null && np == null ? Date.now() : pp == null ? np - 1000 : np == null ? Math.max(pp + 1000, Date.now()) : (pp + np) / 2;
       const todayCol = sec.dataset.key === todayKey();
       const date = todayCol && t.date && t.date < todayKey() ? todayKey() : (sec.dataset.date || null);
-      put({ ...t, date: todayCol && t.date && t.date <= todayKey() ? (t.date < todayKey() ? todayKey() : t.date) : date, position: pos });
+      const nd = todayCol && t.date && t.date <= todayKey() ? (t.date < todayKey() ? todayKey() : t.date) : date;
+      put({ ...t, date: nd, ...(nd !== t.date ? { planned_date: nd, original_date: null } : {}), position: pos });
     }
   }
   $$('.day.over').forEach((s) => s.classList.remove('over'));
@@ -821,6 +839,51 @@ addEventListener('keydown', (e) => {
   if (k === 'n' || k === 'N' || k === '/') { e.preventDefault(); openCapture({ voice: false }); return; }
   if (k.length === 1 && /\S/.test(k)) { e.preventDefault(); openCapture({ prefill: k, voice: false }); updateWhen(); }
 });
+
+/* ───────────── insights ───────────── */
+const insDlg = $('#insights');
+let insData = null, insRange = 14;
+try { insData = JSON.parse(localStorage.getItem('done:stats')); } catch {}
+const pctTxt = (r) => (r === null || r === undefined ? '–' : Math.round(r * 100) + '%');
+function renderInsights() {
+  const d = insData, box = $('#insBody');
+  if (!d) { box.innerHTML = '<p class="ins-empty">Loading…</p>'; return; }
+  const card = (label, val, sub) => `<div class="ins-card"><b>${val}</b><span>${label}</span>${sub ? `<small>${sub}</small>` : ''}</div>`;
+  const days = d.daily.slice(-insRange);
+  const W = 300, H = 84, bw = W / days.length;
+  const bars = days.map((x, i) => {
+    const h = x.rate === null ? 3 : Math.max(3, x.rate * 64), c = x.rate === null ? 'none' : x.rate >= 0.8 ? 'good' : x.rate >= 0.5 ? 'mid' : 'low';
+    return `<rect class="bar ${c}" x="${(i * bw + bw * 0.14).toFixed(1)}" y="${(70 - h).toFixed(1)}" width="${(bw * 0.72).toFixed(1)}" height="${h.toFixed(1)}" rx="3"><title>${x.date}: ${x.rate === null ? 'nothing planned' : Math.round(x.rate * 100) + '% on time (' + x.on_time + '/' + x.planned + ')'}</title></rect>`;
+  }).join('');
+  const lbl = (i) => `<text x="${(i * bw + bw / 2).toFixed(1)}" y="82" text-anchor="middle">${fromKey(days[i].date).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}</text>`;
+  const wk = d.weekdays.map((w) => `<div class="wk"><span>${w.day}</span><i><u style="width:${w.rate === null ? 0 : Math.round(w.rate * 100)}%"></u></i><em>${pctTxt(w.rate)}</em></div>`).join('');
+  box.innerHTML = `
+    <div class="ins-hero"><div class="ins-ring" style="--p:${Math.round((d.today.completion || 0) * 100)}"><b>${pctTxt(d.today.completion)}</b></div><p><strong>${d.today.done}/${d.today.total}</strong> done today</p></div>
+    <div class="ins-grid">
+      ${card('On time · last 7 days', pctTxt(d.on_time.last7.rate), `${d.on_time.last7.on_time}/${d.on_time.last7.planned} same day`)}
+      ${card('On time · last 30 days', pctTxt(d.on_time.last30.rate), `${d.on_time.last30.on_time}/${d.on_time.last30.planned} same day`)}
+      ${card('Completion · overall', pctTxt(d.completion.rate), `${d.completion.done}/${d.completion.total} tasks`)}
+      ${card('Streak', d.streak.current + ' 🔥', `best ${d.streak.best}`)}
+      ${card('Avg rollovers / task', d.rollovers.average_per_task, `${d.rollovers.tasks_rolled_over} carried over`)}
+    </div>
+    <div class="ins-sec"><h3>Daily on-time</h3><div class="seg"><button data-r="14" class="${insRange === 14 ? 'on' : ''}">14 days</button><button data-r="30" class="${insRange === 30 ? 'on' : ''}">30 days</button></div></div>
+    <svg class="ins-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Daily on-time percentage">${bars}<line x1="0" x2="${W}" y1="70.5" y2="70.5" class="base"/>${lbl(0)}${lbl(Math.floor(days.length / 2))}${lbl(days.length - 1)}</svg>
+    <div class="ins-sec"><h3>By weekday</h3></div>
+    <div class="wks">${wk}</div>
+    <p class="fine">On time = finished on the day it was first planned. Rollovers don’t reset that, and deleted tasks aren’t counted.</p>`;
+}
+async function openInsights() {
+  renderInsights();
+  insDlg.showModal();
+  try {
+    if (S.queue.length) await sync();
+    const r = await fetch('/api/stats', { cache: 'no-store' });
+    if (r.ok) { insData = await r.json(); localStorage.setItem('done:stats', JSON.stringify(insData)); renderInsights(); }
+    else if (!insData) $('#insBody').innerHTML = '<p class="ins-empty">Insights need server storage to be set up.</p>';
+  } catch { if (!insData) $('#insBody').innerHTML = '<p class="ins-empty">You’re offline. Insights will load when you’re back.</p>'; }
+}
+$('#insightsBtn').addEventListener('click', openInsights);
+$('#insBody').addEventListener('click', (e) => { const b = e.target.closest('[data-r]'); if (b) { insRange = +b.dataset.r; renderInsights(); } });
 
 /* ───────────── settings / view ───────────── */
 const I_FOCUS = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.9"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';

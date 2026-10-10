@@ -23,6 +23,29 @@ function dayKey(offset = 0) {
 }
 
 // undefined -> today, null/"someday"/"" -> null, "today"/"tomorrow"/YYYY-MM-DD
+const nyDate = (iso) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ(), year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+const dayDiff = (a, b) => Math.round((Date.parse(b + 'T12:00:00Z') - Date.parse(a + 'T12:00:00Z')) / 86400000);
+const dateOrNull = (v) => { if (v === null || v === undefined || v === '') return null; const s = String(v); if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || isNaN(new Date(s + 'T00:00:00Z'))) throw new Error('invalid date'); return s; };
+
+// Lazy rollover + backfill. Not-done tasks dated before today (NY) move to today, keeping original_date (first planned date)
+// and adding the number of days carried to `rollovers`. Done and Someday (null date) tasks never move.
+// Does not touch updated_at (derived change). Returns true if anything changed.
+function normalize(data) {
+  const today = dayKey(0);
+  let changed = false;
+  for (const t of Object.values(data.tasks)) {
+    if (!('planned_date' in t)) { t.planned_date = t.date || null; changed = true; }   // backfill: first scheduled date (Someday stays unplanned)
+    if (t.rollovers === undefined) { t.rollovers = 0; changed = true; }
+    if (!t.done && t.date && t.date < today) {
+      if (!t.original_date) t.original_date = t.date;
+      t.rollovers = (t.rollovers || 0) + dayDiff(t.date, today);
+      t.date = today;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function parseDate(v) {
   if (v === undefined) return dayKey(0);
   if (v === null) return null;
@@ -61,6 +84,7 @@ async function load() {
 async function mutate(fn) {
   for (let i = 0; i < 9; i++) {
     const { data, etag } = await load();
+    normalize(data);
     const result = await fn(data);
     if (result && result.skip) return result.value;
     if (process.env.DONE_DEV) { mem = data; return result; }
@@ -100,4 +124,4 @@ function readBody(req) {
   return b && typeof b === 'object' ? b : {};
 }
 
-module.exports = { authed, configured, load, mutate, cors, json, readBody, parseDate, dayKey, UUID };
+module.exports = { nyDate, dayDiff, dateOrNull, normalize, authed, configured, load, mutate, cors, json, readBody, parseDate, dayKey, UUID };

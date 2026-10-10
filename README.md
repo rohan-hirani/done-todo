@@ -12,6 +12,13 @@ A calm, day-by-day to-do list in the spirit of TeuxDeux. Installable PWA, works 
 - **Light/dark** follows the system. Safe-area insets, 16px+ inputs (no iOS zoom), big tap targets.
 - **Desktop shortcuts**: any letter / `n` / `/` capture, `?` help, arrows to move between tasks, `Space`/`x` complete, `Enter`/`e` edit, `Alt+↑↓` reorder, `Alt+←→` change day, `Del` delete.
 
+### Auto-rollover and insights
+- **Rollover:** any not-done task dated before today (America/New_York) moves to today. The server does it lazily on `GET /api/tasks` (and on any write); the client does the same at midnight/on focus. The task keeps `original_date` (first planned date) and `rollovers` (days carried) and shows a "Carried over from…" marker. Done tasks and Someday tasks never move.
+- **Analytics fields:** `planned_date` (first scheduled date; set on creation and when you explicitly move a task, never by rollover), `done_at`, `original_date`, `rollovers`. Existing tasks are backfilled with `planned_date = date` (Someday tasks stay unplanned, so they never count as missed).
+- **On time** = `done_at`'s New York date equals `planned_date`. "Last 7 / 30 days" cover the 7 / 30 days *before today* (today is still in progress and is shown separately). **Deleted tasks are excluded** from all stats. Recurring-task instances are counted like any other task (the app has no recurrence feature yet; once instances exist as tasks they are included automatically).
+- **Insights** (bar-chart icon in the header): today's completion, on-time 7/30 days, overall completion, streak (current/best), average rollovers per task, a 14/30-day on-time bar chart and a per-weekday breakdown.
+- **API:** `curl https://done-todo-rohan-hirani.vercel.app/api/stats` returns all of it as JSON (plus a one-line `summary`).
+
 ### Voice: how transcription works
 Works in the iOS home-screen app too (it does not use Web Speech). The client probes `GET /api/transcribe` once (cached 6 h) and picks a backend:
 1. **Groq (server)**: `POST /api/transcribe` forwards the clip to `whisper-large-v3-turbo` (English). Enable it by setting the env var **`GROQ_API_KEY`** on the Vercel project `done-todo` and redeploying. Without it the route answers `501` and the client silently uses the on-device model. Clips are limited to ~60 s / ~3 MB (Vercel's request limit is 4.5 MB). Like the rest of the API this route is open, so anyone with the URL could use your Groq quota.
@@ -27,6 +34,7 @@ Notes: iOS asks for microphone permission the first time (and may require a tap 
 ```
 public/            static PWA (no build step): index.html, app.js, fx.js (confetti), sound.js, sw.js, manifest, icons
 api/tasks.js       GET/POST/PATCH/DELETE  (open, no auth; stores everything in one JSON document in a private Vercel Blob)
+api/stats.js       GET productivity stats (on-time rate, streaks, rollovers, daily + weekday breakdown)
 api/transcribe.js  POST audio -> text via Groq Whisper (501 without GROQ_API_KEY)
 api/ping.js        health check (is server storage configured)
 scripts/dev.js     local dev server with an in-memory store  (npm run dev)
