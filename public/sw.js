@@ -1,5 +1,5 @@
-const VERSION = 'done-v1';
-const SHELL = ['/', '/styles.css', '/app.js', '/fx.js', '/sound.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png'];
+const VERSION = 'done-v2';
+const SHELL = ['/', '/styles.css', '/app.js', '/fx.js', '/sound.js', '/nlp.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

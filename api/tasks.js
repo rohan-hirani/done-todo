@@ -21,6 +21,7 @@ function fields(b, { partial }) {
     if (!isFinite(p)) throw new Error('position must be a number');
     out.position = p;
   }
+  if (b.pinned !== undefined) out.pinned = !!b.pinned;
   if (typeof b.source === 'string') out.source = b.source.slice(0, 40);
   return out;
 }
@@ -62,7 +63,7 @@ module.exports = async (req, res) => {
         delete data.deleted[tid];
         const t = {
           id: tid, title: f.title, date: f.date, done: f.done ?? false, done_at: f.done_at ?? null,
-          position: f.position ?? Date.now(), created_at: (upsert && validIso(b.created_at)) || (old && old.created_at) || now,
+          pinned: f.pinned ?? !!(old && old.pinned), position: f.position ?? Date.now(), created_at: (upsert && validIso(b.created_at)) || (old && old.created_at) || now,
           updated_at: stamp, source: f.source || (old && old.source) || (upsert ? 'app' : 'api'),
         };
         data.tasks[tid] = t;

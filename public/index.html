@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Done</title>
 <meta name="description" content="A calm, day-by-day to-do list.">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -44,14 +44,45 @@
       <svg viewBox="0 0 24 24"><path d="M12 4v10m0 0l-4-4m4 4l4-4M5 18h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <span>Install</span>
     </button>
-    <button class="icon-btn" id="soundBtn" aria-label="Sound on" aria-pressed="true" title="Sound (m)"></button>
+    <button class="icon-btn only-mobile" id="viewBtn" aria-label="Switch view" title="Focus / overview"></button>
     <button class="icon-btn" id="syncBtn" aria-label="Sync status" title="Sync"><span class="dot" id="syncDot"></span></button>
-    <button class="icon-btn" id="helpBtn" aria-label="Keyboard shortcuts" title="Shortcuts (?)">?</button>
+    <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
   </div>
 </header>
 
+<div class="ptr" id="ptr" aria-hidden="true">Release to sync</div>
 <nav class="strip" id="strip" aria-label="Jump to day"></nav>
 <main class="board" id="board" tabindex="-1"></main>
+
+<button class="fab" id="fab" aria-label="Add a task" title="Add a task (n)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></button>
+
+<div class="cap-backdrop" id="capBackdrop"></div>
+<section class="capture" id="capture" role="dialog" aria-label="Add a task" aria-modal="true" inert>
+  <div class="grab" id="capGrab"><span></span></div>
+  <form id="capForm" autocomplete="off" novalidate>
+    <div class="cap-row">
+      <input id="cInput" type="text" enterkeyhint="done" placeholder="What needs doing?" aria-label="New task" maxlength="500" autocapitalize="sentences" autocomplete="off" autocorrect="on" spellcheck="true">
+      <button type="button" class="mic" id="micBtn" aria-label="Dictate a task" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="chips-row" id="capChips" role="radiogroup" aria-label="When">
+      <button type="button" class="cchip" role="radio" data-v="today">Today</button>
+      <button type="button" class="cchip" role="radio" data-v="tomorrow">Tomorrow</button>
+      <button type="button" class="cchip" role="radio" data-v="someday">Someday</button>
+      <label class="cchip date" id="cDateChip"><span id="cDateLbl">Date</span><input type="date" id="cDate" aria-label="Pick a date"></label>
+    </div>
+    <p class="cap-when" id="cWhen" aria-live="polite"></p>
+    <p class="cap-hint" id="cHint" hidden></p>
+    <div class="cap-preview" id="cPreview" hidden>
+      <p>Add these tasks?</p><ul></ul>
+      <div class="row"><button type="button" class="ghost" id="pvCancel">Cancel</button><button type="button" class="primary" id="pvAdd">Add</button></div>
+    </div>
+    <ul class="cap-log" id="cLog" aria-live="polite"></ul>
+  </form>
+</section>
 
 <canvas id="fx" aria-hidden="true"></canvas>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -62,19 +93,20 @@
   <button role="menuitem" data-act="tomorrow">Tomorrow</button>
   <label class="menu-date" role="menuitem">Pick a date <input type="date" id="menuDate"></label>
   <button role="menuitem" data-act="someday">Someday</button>
+  <button role="menuitem" data-act="pin" id="menuPin">Star as top 3</button>
   <hr>
   <button role="menuitem" data-act="delete" class="danger">Delete</button>
 </div>
 
 <dialog id="lock" class="sheet">
   <form method="dialog" id="lockForm">
-    <h2>Welcome to Done</h2>
-    <p>Enter your passcode once to sync across devices.</p>
-    <input id="lockInput" type="password" inputmode="text" autocomplete="current-password" placeholder="Passcode" aria-label="Passcode" autocapitalize="off" spellcheck="false">
+    <h2>This list is private</h2>
+    <p>Open your setup link, or paste your key (or the whole link) below. You only do this once per device.</p>
+    <input id="lockInput" type="password" inputmode="text" autocomplete="current-password" placeholder="Paste key or setup link" aria-label="Key or setup link" autocapitalize="off" spellcheck="false">
     <p class="err" id="lockErr" role="alert"></p>
     <div class="row">
-      <button type="button" class="ghost" id="lockSkip">Use on this device only</button>
-      <button class="primary" id="lockGo">Unlock</button>
+      <button type="button" class="ghost" id="lockSkip">Just this device</button>
+      <button class="primary" id="lockGo">Connect</button>
     </div>
   </form>
 </dialog>
@@ -92,19 +124,30 @@
 <dialog id="syncSheet" class="sheet">
   <h2>Sync</h2>
   <p id="syncText"></p>
-  <div class="row">
-    <button class="ghost" id="syncSignOut">Change passcode</button>
-    <button class="primary" id="syncNow">Sync now</button>
+  <div class="row"><button class="ghost" data-close>Close</button><button class="primary" id="syncNow">Sync now</button></div>
+</dialog>
+
+<dialog id="settings" class="sheet">
+  <h2>Settings</h2>
+  <label class="toggle"><span>Sound<small>A soft pop when you finish something</small></span><input type="checkbox" id="setSound"></label>
+  <label class="toggle"><span>Haptics<small>Gentle taps on gestures</small></span><input type="checkbox" id="setHaptics"></label>
+  <label class="toggle"><span>Voice first<small>Start listening as soon as capture opens</small></span><input type="checkbox" id="setVoice"></label>
+  <div class="set-actions">
+    <button class="ghost" id="setCopy">Copy setup link</button>
+    <button class="ghost" id="setKey">Enter key or link</button>
+    <button class="ghost" id="setHelp">Shortcuts</button>
   </div>
+  <p class="fine">The setup link signs another device in with one tap. Keep it private.</p>
+  <div class="row"><button class="primary" data-close>Done</button></div>
 </dialog>
 
 <dialog id="helpSheet" class="sheet">
   <h2>Keyboard shortcuts</h2>
   <dl class="keys">
-    <dt><kbd>n</kbd></dt><dd>New task</dd>
-    <dt><kbd>t</kbd></dt><dd>Jump to Today</dd>
-    <dt><kbd>s</kbd></dt><dd>Jump to Someday</dd>
-    <dt><kbd>m</kbd></dt><dd>Mute / unmute</dd>
+    <dt><kbd>n</kbd> <kbd>/</kbd> or any letter</dt><dd>New task (capture)</dd>
+    <dt><kbd>Enter</kbd></dt><dd>Add and keep going</dd>
+    <dt><kbd>Esc</kbd></dt><dd>Close capture</dd>
+    <dt><kbd>?</kbd></dt><dd>This help</dd>
     <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Move between tasks</dd>
     <dt><kbd>Space</kbd> / <kbd>x</kbd></dt><dd>Complete task</dd>
     <dt><kbd>Enter</kbd> / <kbd>e</kbd></dt><dd>Edit task</dd>

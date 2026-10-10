@@ -1,26 +1,37 @@
 // Done — a calm, day-by-day to-do list. Vanilla JS, no build step.
 import { burst, celebrate } from './fx.js';
 import * as sfx from './sound.js';
+import { parseWhen } from './nlp.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const LS = 'done:v1';
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const isMobile = () => matchMedia('(max-width:760px)').matches;
 
 /* ───────────── state ───────────── */
 const saved = (() => { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } })();
+const readCookie = () => (document.cookie.match(/(?:^|;\s*)done_key=([^;]*)/) || [])[1] ? decodeURIComponent(document.cookie.match(/(?:^|;\s*)done_key=([^;]*)/)[1]) : '';
 const S = {
-  tasks: saved.tasks || {},       // id -> task
-  queue: saved.queue || [],       // pending writes [{t:'put',task}|{t:'del',id}]
-  passcode: saved.passcode || '',
+  tasks: saved.tasks || {},
+  queue: saved.queue || [],
+  passcode: saved.passcode || readCookie() || '',
   muted: !!saved.muted,
+  haptics: saved.haptics !== false,
+  voiceFirst: !!saved.voiceFirst,
+  view: saved.view || 'focus',
   skipLock: !!saved.skipLock,
   days: saved.days || 7,
-  mode: 'local',                  // sync | local | locked | offline | busy
+  mode: 'local',
 };
 function persist() {
-  localStorage.setItem(LS, JSON.stringify({ tasks: S.tasks, queue: S.queue, passcode: S.passcode, muted: S.muted, skipLock: S.skipLock, days: S.days }));
+  localStorage.setItem(LS, JSON.stringify({ tasks: S.tasks, queue: S.queue, passcode: S.passcode, muted: S.muted, haptics: S.haptics, voiceFirst: S.voiceFirst, view: S.view, skipLock: S.skipLock, days: S.days }));
 }
+function storeKey(key) {
+  S.passcode = key; persist();
+  document.cookie = `done_key=${encodeURIComponent(key)}; max-age=${60 * 60 * 24 * 400}; path=/; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
+}
+const buzz = (p) => { if (S.haptics && navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate(p); };
 
 /* ───────────── dates ───────────── */
 const pad = (n) => String(n).padStart(2, '0');
@@ -37,6 +48,7 @@ function dayName(k) {
   if (k === addDays(t, -1)) return 'Yesterday';
   return fmt(k, { weekday: 'long' });
 }
+const whenLabel = (k) => (k === null ? 'Someday' : k === todayKey() ? 'Today' : k === addDays(todayKey(), 1) ? 'Tomorrow' : fmt(k, { weekday: 'short', month: 'short', day: 'numeric' }));
 
 /* ───────────── data ops ───────────── */
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
@@ -52,7 +64,7 @@ function put(task) {
 function addTask(title, date) {
   title = title.trim();
   if (!title) return null;
-  const t = { id: uid(), title, date, done: false, done_at: null, position: Date.now(), created_at: nowIso(), updated_at: nowIso(), source: 'app' };
+  const t = { id: uid(), title, date, done: false, done_at: null, pinned: false, position: Date.now(), created_at: nowIso(), updated_at: nowIso(), source: 'app' };
   put(t);
   return t;
 }
@@ -70,12 +82,13 @@ function removeTask(id) {
 function dayList(key) {
   const today = todayKey();
   const all = Object.values(S.tasks);
-  if (key === 'someday') return all.filter((t) => !t.date).sort((a, b) => a.position - b.position);
-  if (key === today) {
-    return all.filter((t) => t.date === today || (t.date && t.date < today && (!t.done || doneKey(t) === today)))
+  let list;
+  if (key === 'someday') list = all.filter((t) => !t.date).sort((a, b) => a.position - b.position);
+  else if (key === today) {
+    list = all.filter((t) => t.date === today || (t.date && t.date < today && (!t.done || doneKey(t) === today)))
       .sort((a, b) => ((a.date < today ? 0 : 1) - (b.date < today ? 0 : 1)) || (a.date < today && b.date < today ? a.date.localeCompare(b.date) : 0) || a.position - b.position);
-  }
-  return all.filter((t) => t.date === key).sort((a, b) => a.position - b.position);
+  } else list = all.filter((t) => t.date === key).sort((a, b) => a.position - b.position);
+  return list.sort((a, b) => (b.pinned && !b.done ? 1 : 0) - (a.pinned && !a.done ? 1 : 0));   // starred first (stable)
 }
 function streak() {
   const days = new Set(Object.values(S.tasks).filter((t) => t.done && t.done_at).map(doneKey));
@@ -90,11 +103,14 @@ const dayKeys = () => Array.from({ length: S.days }, (_, i) => addDays(todayKey(
 const board = $('#board');
 const strip = $('#strip');
 let builtFor = '';
-let editingId = null;
 let activeKey = 'today';
 
 const ICON_MORE = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg>';
 const ICON_CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle class="box" cx="12" cy="12" r="10"/><circle class="fill" cx="12" cy="12" r="10.8"/><path class="tick" d="M7 12.5l3.4 3.4L17 8.8"/></svg>';
+const I_STAR = '<svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.5 6 .8-4.4 4.2 1.1 6-5.3-2.9-5.3 2.9 1.1-6L3.4 9.8l6-.8z" fill="currentColor"/></svg>';
+const I_MOVE = '<svg viewBox="0 0 24 24"><path d="M4 12h14m-5-5l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const I_TRASH = '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2m-6 0l1 12h6l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const I_OK = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 function buildBoard() {
   const sig = todayKey() + '|' + S.days;
@@ -112,6 +128,7 @@ function buildBoard() {
     sec.dataset.date = c.date || '';
     sec.setAttribute('aria-label', name);
     sec.innerHTML = `<header><h2>${name}</h2><span class="sub">${sub}</span></header>
+      ${c.today ? `<div class="hero"><div class="hero-ring"><svg viewBox="0 0 44 44" aria-hidden="true"><circle class="bg" cx="22" cy="22" r="18"/><circle class="fg" cx="22" cy="22" r="18" pathLength="100"/></svg><span class="hero-num">0/0</span></div><p class="hero-cap"></p></div>` : ''}
       <form class="add" autocomplete="off"><span class="plus" aria-hidden="true">+</span><input type="text" enterkeyhint="done" placeholder="${c.today ? 'Add a task for today' : 'Add a task'}" aria-label="Add task to ${name}" maxlength="500"></form>
       <ul class="list" role="list"></ul>
       <p class="empty">${c.today ? 'A clear day. Add something, or enjoy it.' : c.date === null ? 'Park ideas here for later.' : 'Nothing planned.'}</p>`;
@@ -133,26 +150,30 @@ function buildBoard() {
   observeActive();
 }
 
-function taskSig(t, key) {
-  return [t.title, t.done, t.date, key === todayKey() && t.date && t.date < key ? t.date : ''].join('\u0001');
-}
+const taskSig = (t, key) => [t.title, t.done, t.date, t.pinned, key === todayKey() && t.date && t.date < key ? t.date : ''].join('\u0001');
 function makeLi(t) {
   const li = document.createElement('li');
   li.className = 'task';
   li.dataset.id = t.id;
-  li.innerHTML = `<button class="check" role="checkbox" aria-checked="false" aria-label="Complete task">${ICON_CHECK}</button>
-    <div class="body"><span class="title" tabindex="0" role="button" aria-label="Edit task"></span><span class="carry" hidden></span></div>
-    <button class="more" aria-haspopup="menu" aria-label="Move or delete task">${ICON_MORE}</button>`;
+  li.innerHTML = `<div class="swipe-done">${I_OK}<span>Done</span></div>
+    <div class="swipe-actions"><button class="act-star" aria-label="Star as top 3">${I_STAR}<span>Top 3</span></button><button class="act-move" aria-label="Move">${I_MOVE}<span>Move</span></button><button class="act-del" aria-label="Delete">${I_TRASH}<span>Delete</span></button></div>
+    <div class="task-in">
+      <button class="check" role="checkbox" aria-checked="false" aria-label="Complete task">${ICON_CHECK}</button>
+      <div class="body"><span><span class="star" aria-label="Top 3">★</span><span class="title" tabindex="0" role="button" aria-label="Edit task"></span></span><span class="carry" hidden></span></div>
+      <button class="more" aria-haspopup="menu" aria-label="Move or delete task">${ICON_MORE}</button>
+    </div>`;
   return li;
 }
 function updateLi(li, t, key) {
   const carried = key === todayKey() && t.date && t.date < key;
   const sig = taskSig(t, key);
   li.classList.toggle('done', t.done);
+  li.classList.toggle('pinned', !!t.pinned && !t.done);
   $('.check', li).setAttribute('aria-checked', String(t.done));
   if (li.dataset.sig === sig) return;
   li.dataset.sig = sig;
   if (!li.classList.contains('editing')) $('.title', li).textContent = t.title;
+  $('.act-star span', li).textContent = t.pinned ? 'Unstar' : 'Top 3';
   const c = $('.carry', li);
   c.hidden = !carried;
   if (carried) c.textContent = 'Carried over from ' + (t.date === addDays(key, -1) ? 'yesterday' : fmt(t.date, { weekday: 'short', month: 'short', day: 'numeric' }));
@@ -160,7 +181,11 @@ function updateLi(li, t, key) {
 
 function render() {
   buildBoard();
+  document.body.classList.toggle('view-focus', S.view === 'focus');
+  document.body.classList.toggle('view-overview', S.view !== 'focus');
   const today = todayKey();
+  // FLIP: remember where rows were so reorders glide instead of jump
+  const before = new Map($$('.task', board).map((li) => [li.dataset.id, { top: li.getBoundingClientRect().top, col: li.closest('.day')?.dataset.key }]));
   let doneN = 0, totalN = 0;
   for (const sec of $$('.day', board)) {
     const key = sec.dataset.key;
@@ -176,10 +201,18 @@ function render() {
       if (li !== want && !li.classList.contains('dragging')) ul.insertBefore(li, want);
       prev = li.classList.contains('dragging') ? prev : li;
     }
-    for (const li of existing.values()) if (!li.classList.contains('dragging') && !li.classList.contains('removing')) li.remove();
+    for (const li of existing.values()) if (!li.classList.contains('dragging')) li.remove();
     if (key === today) { totalN = list.length; doneN = list.filter((t) => t.done).length; }
     const chip = $(`.chip[data-key="${key}"] small`, strip);
     if (chip) { const open = list.filter((t) => !t.done).length; chip.textContent = open || ''; }
+  }
+  if (!reduceMotion.matches) {
+    for (const li of $$('.task', board)) {
+      const b = before.get(li.dataset.id);
+      if (!b || li.classList.contains('dragging') || li.closest('.day')?.dataset.key !== b.col) continue;
+      const dy = b.top - li.getBoundingClientRect().top;
+      if (Math.abs(dy) > 2) li.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    }
   }
   renderStats(doneN, totalN);
   renderSync();
@@ -187,46 +220,64 @@ function render() {
 
 let lastAllDone = null;
 function renderStats(done, total) {
+  const full = total > 0 && done === total;
   $('#ringNum').textContent = `${done}/${total}`;
   $('#ringFg').style.strokeDashoffset = total ? 100 - (done / total) * 100 : 100;
-  const full = total > 0 && done === total;
   $('#ringWrap').classList.toggle('full', full);
   $('#ringCap').textContent = !total ? 'free day' : full ? 'all done' : 'done';
+  const hero = $('.hero');
+  if (hero) {
+    $('.hero-num', hero).textContent = `${done}/${total}`;
+    $('.hero-ring .fg', hero).style.strokeDashoffset = total ? 100 - (done / total) * 100 : 100;
+    $('.hero-ring', hero).classList.toggle('full', full);
+    const left = total - done;
+    $('.hero-cap', hero).textContent = !total ? 'Nothing on your plate. Tap + to add something.' : full ? 'You cleared today. Go enjoy it.' : `${left} left today${done ? ' · nice momentum' : ''}`;
+  }
   const n = streak();
   const el = $('#streak');
   const prev = +$('#streakNum').textContent;
   $('#streakNum').textContent = n;
   el.classList.toggle('on', n > 0);
   el.title = n ? `${n}-day streak` : 'Complete a task to start a streak';
-  if (n > prev && prev !== 0 || (n === 1 && prev === 0 && lastAllDone !== null)) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+  if ((n > prev && prev !== 0) || (n === 1 && prev === 0 && lastAllDone !== null)) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
   lastAllDone = full;
 }
 
 /* ───────────── completion ───────────── */
-function toggle(id, origin) {
+function toggle(id, origin, { quiet = false, undoable = true } = {}) {
   const t = S.tasks[id];
   if (!t) return;
   const wasFull = isTodayFull();
   const done = !t.done;
   put({ ...t, done, done_at: done ? nowIso() : null });
   if (!done) return;
+  if (quiet) return;
   const li = $(`.task[data-id="${id}"]`);
   if (li) { li.classList.remove('pop'); void li.offsetWidth; li.classList.add('pop'); }
   const box = origin || (li && $('.check', li));
   const r = box && box.getBoundingClientRect();
-  const x = r ? r.left + r.width / 2 : innerWidth / 2, y = r ? r.top + r.height / 2 : innerHeight / 2;
-  burst(x, y);
+  burst(r ? r.left + r.width / 2 : innerWidth / 2, r ? r.top + r.height / 2 : innerHeight / 2);
   sfx.pop(S.muted);
-  navigator.vibrate && navigator.vibrate(12);
+  buzz(12);
   if (!wasFull && isTodayFull()) setTimeout(allDone, 250);
+  else if (undoable) toast('Completed', { action: 'Undo', onAction: () => toggle(id, null, { quiet: true }), ms: 3200 });
 }
 const isTodayFull = () => { const l = dayList(todayKey()); return l.length > 0 && l.every((t) => t.done); };
 function allDone() {
   celebrate();
   sfx.fanfare(S.muted);
-  navigator.vibrate && navigator.vibrate([15, 40, 15, 40, 30]);
+  buzz([15, 40, 15, 40, 30]);
   const msgs = ['Clear day. Nicely done.', 'All done for today. Go enjoy it.', 'Zero left. Beautiful.', 'That’s everything. Well played.'];
   toast(msgs[Math.floor(Math.random() * msgs.length)], { big: true, ms: 4200 });
+}
+function togglePin(id) {
+  const t = S.tasks[id]; if (!t) return;
+  if (!t.pinned) {
+    const key = t.date === null ? 'someday' : t.date < todayKey() ? todayKey() : t.date;
+    if (dayList(key).filter((x) => x.pinned && !x.done).length >= 3) return toast('Top 3 is full. Unstar one first.', { ms: 2200 });
+  }
+  put({ ...t, pinned: !t.pinned });
+  buzz(8);
 }
 
 /* ───────────── toast ───────────── */
@@ -272,8 +323,7 @@ let menuId = null, menuReturn = null;
 function openMenu(id, anchor) {
   menuId = id; menuReturn = anchor;
   menu.hidden = false; menuBack.hidden = false;
-  const small = matchMedia('(max-width:760px)').matches;
-  if (!small) {
+  if (!isMobile()) {
     const r = anchor.getBoundingClientRect();
     menu.style.left = Math.max(8, Math.min(innerWidth - 220, r.right - 210)) + 'px';
     const below = r.bottom + 8, h = menu.offsetHeight;
@@ -281,6 +331,7 @@ function openMenu(id, anchor) {
   }
   const t = S.tasks[id];
   $('#menuDate').value = t && t.date || '';
+  $('#menuPin').textContent = t && t.pinned ? 'Remove star' : 'Star as top 3';
   $('button', menu).focus();
 }
 function closeMenu(refocus = true) {
@@ -289,30 +340,31 @@ function closeMenu(refocus = true) {
   if (refocus && menuReturn && menuReturn.isConnected) menuReturn.focus();
   menuId = null;
 }
-function moveTo(id, date, { append = true } = {}) {
+function moveTo(id, date) {
   const t = S.tasks[id];
-  if (!t) return;
-  put({ ...t, date, position: append ? Date.now() : t.position });
+  if (t) put({ ...t, date, position: Date.now() });
 }
 function deleteWithUndo(id) {
   const li = $(`.task[data-id="${id}"]`);
   const next = li && (li.nextElementSibling || li.previousElementSibling);
   const t = removeTask(id);
   if (!t) return;
+  buzz(10);
   toast('Task deleted', { action: 'Undo', onAction: () => put(t), ms: 5000 });
-  if (next && next.isConnected) $('.title', next).focus({ preventScroll: true });
+  if (next && next.isConnected && !isMobile()) $('.title', next).focus({ preventScroll: true });
 }
 menu.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-act]');
   if (!b || !menuId) return;
-  const id = menuId; closeMenu(false);
+  const id = menuId; closeMenu(false); closeSwipe();
   const a = b.dataset.act;
   if (a === 'today') moveTo(id, todayKey());
   else if (a === 'tomorrow') moveTo(id, addDays(todayKey(), 1));
   else if (a === 'someday') moveTo(id, null);
+  else if (a === 'pin') togglePin(id);
   else if (a === 'delete') deleteWithUndo(id);
 });
-$('#menuDate').addEventListener('change', (e) => { if (menuId && e.target.value) { const id = menuId; closeMenu(false); moveTo(id, e.target.value); toast('Moved to ' + fmt(e.target.value, { weekday: 'long', month: 'short', day: 'numeric' })); scrollToKeySoon(e.target.value); } });
+$('#menuDate').addEventListener('change', (e) => { if (menuId && e.target.value) { const id = menuId; closeMenu(false); closeSwipe(); moveTo(id, e.target.value); toast('Moved to ' + whenLabel(e.target.value)); } });
 menuBack.addEventListener('click', () => closeMenu());
 menu.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { e.stopPropagation(); closeMenu(); }
@@ -325,17 +377,24 @@ menu.addEventListener('keydown', (e) => {
 
 /* ───────────── board events ───────────── */
 board.addEventListener('click', (e) => {
+  if (drag.moved) return;
   const li = e.target.closest('.task');
   if (!li) return;
-  if (e.target.closest('.check')) return toggle(li.dataset.id, $('.check', li));
-  if (e.target.closest('.more')) return openMenu(li.dataset.id, $('.more', li));
-  if (e.target.closest('.title') && !drag.moved) startEdit(li);
+  const id = li.dataset.id;
+  if (e.target.closest('.check')) return toggle(id, $('.check', li));
+  if (e.target.closest('.more')) return openMenu(id, $('.more', li));
+  if (e.target.closest('.act-star')) { closeSwipe(); return togglePin(id); }
+  if (e.target.closest('.act-move')) return openMenu(id, e.target.closest('.act-move'));
+  if (e.target.closest('.act-del')) { closeSwipe(); return deleteWithUndo(id); }
+  if (li.classList.contains('open')) return closeSwipe();
+  if (e.target.closest('.title')) startEdit(li);
 });
 board.addEventListener('submit', (e) => {
   e.preventDefault();
   const form = e.target.closest('.add'); if (!form) return;
   const inp = $('input', form), key = form.closest('.day').dataset.date || null;
-  if (addTask(inp.value, key)) { inp.value = ''; const ul = $('.list', form.closest('.day')); ul.scrollTop = 0; }
+  const p = parseWhen(inp.value, new Date());
+  if (addTask(p.date !== undefined ? p.title : inp.value, p.date !== undefined ? p.date : key)) { inp.value = ''; $('.list', form.closest('.day')).scrollTop = 0; }
   inp.focus();
 });
 board.addEventListener('keydown', (e) => {
@@ -347,14 +406,11 @@ board.addEventListener('keydown', (e) => {
   const focusTitle = (el) => el && $('.title', el).focus();
   if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
     e.preventDefault();
-    const a = list[i + (e.key === 'ArrowUp' ? -2 : 1)], b = list[i + (e.key === 'ArrowUp' ? -1 : 2)];
-    if (e.key === 'ArrowUp' && !list[i - 1]) return;
-    if (e.key === 'ArrowDown' && !list[i + 1]) return;
-    const pa = a ? S.tasks[a.dataset.id].position : null, pb = b ? S.tasks[b.dataset.id].position : null;
-    const lo = e.key === 'ArrowUp' ? pa : S.tasks[list[i + 1].dataset.id].position;
-    const hi = e.key === 'ArrowUp' ? S.tasks[list[i - 1].dataset.id].position : pb;
-    const pos = lo == null ? hi - 1000 : hi == null ? lo + 1000 : (lo + hi) / 2;
-    put({ ...S.tasks[id], position: pos });
+    const up = e.key === 'ArrowUp';
+    if (up ? !list[i - 1] : !list[i + 1]) return;
+    const pos = (n) => (list[n] ? S.tasks[list[n].dataset.id].position : null);
+    const lo = up ? pos(i - 2) : pos(i + 1), hi = up ? pos(i - 1) : pos(i + 2);
+    put({ ...S.tasks[id], position: lo == null ? hi - 1000 : hi == null ? lo + 1000 : (lo + hi) / 2 });
     requestAnimationFrame(() => focusTitle($(`.task[data-id="${id}"]`)));
   } else if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
     e.preventDefault();
@@ -369,34 +425,69 @@ board.addEventListener('keydown', (e) => {
   else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteWithUndo(id); }
 });
 
-/* ───────────── drag & drop (pointer based: mouse + touch long-press) ───────────── */
-const drag = { li: null, ghost: null, moved: false, startX: 0, startY: 0, timer: 0, pid: null, dx: 0, dy: 0, touch: false, raf: 0, lastX: 0, lastY: 0, chipTimer: 0 };
+/* ───────────── pointer gestures: drag-reorder (mouse / long-press) + swipe actions (touch) ───────────── */
+const drag = { li: null, ghost: null, moved: false, startX: 0, startY: 0, timer: 0, pid: null, dx: 0, dy: 0, touch: false, raf: 0, lastX: 0, lastY: 0, chipTimer: 0, swipe: false, base: 0, crossed: 0 };
+const ACT_W = 204;
+let openLi = null;
+function closeSwipe(except) {
+  if (openLi && openLi !== except) { $('.task-in', openLi).style.transform = ''; openLi.classList.remove('open'); }
+  if (!except) openLi = null;
+}
 board.addEventListener('pointerdown', (e) => {
   const li = e.target.closest('.task');
-  if (!li || e.target.closest('.check,.more,input') || (e.pointerType === 'mouse' && e.button !== 0) || li.classList.contains('editing')) return;
-  Object.assign(drag, { li, moved: false, startX: e.clientX, startY: e.clientY, pid: e.pointerId, touch: e.pointerType !== 'mouse', lastX: e.clientX, lastY: e.clientY });
-  if (drag.touch) drag.timer = setTimeout(() => beginDrag(e), 320);
+  if (openLi && (!li || li !== openLi)) closeSwipe();
+  if (!li || e.target.closest('.check,input,.swipe-actions') || (e.pointerType === 'mouse' && e.button !== 0) || li.classList.contains('editing')) return;
+  Object.assign(drag, { li, moved: false, swipe: false, crossed: 0, startX: e.clientX, startY: e.clientY, pid: e.pointerId, touch: e.pointerType !== 'mouse', lastX: e.clientX, lastY: e.clientY, base: li.classList.contains('open') ? -ACT_W : 0 });
+  if (drag.touch) drag.timer = setTimeout(() => { if (!drag.swipe) beginDrag(e); }, 380);
 });
 addEventListener('pointermove', (e) => {
   if (!drag.li || e.pointerId !== drag.pid) return;
   drag.lastX = e.clientX; drag.lastY = e.clientY;
-  if (!drag.ghost) {
-    const dist = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY);
-    if (drag.touch) { if (dist > 9) cancelPending(); }
-    else if (dist > 5) beginDrag(e);
-    return;
-  }
-  e.preventDefault();
-  dragMove();
+  const dx = e.clientX - drag.startX, dy = e.clientY - drag.startY;
+  if (drag.ghost) { e.preventDefault(); dragMove(); return; }
+  if (drag.swipe) { swipeMove(dx); return; }
+  if (drag.touch) {
+    if (Math.hypot(dx, dy) > 9) {
+      if (Math.abs(dx) > Math.abs(dy) * 1.3) { clearTimeout(drag.timer); drag.timer = 0; drag.swipe = true; drag.moved = true; drag.li.classList.add('swiping'); swipeMove(dx); }
+      else cancelPending();
+    }
+  } else if (Math.hypot(dx, dy) > 5) beginDrag(e);
 });
-addEventListener('pointerup', (e) => { if (e.pointerId === drag.pid) endDrag(); });
-addEventListener('pointercancel', (e) => { if (e.pointerId === drag.pid) endDrag(); });
-addEventListener('touchmove', (e) => { if (drag.ghost) e.preventDefault(); }, { passive: false });
+addEventListener('pointerup', (e) => { if (e.pointerId === drag.pid) { drag.swipe ? endSwipe(e.clientX - drag.startX) : endDrag(); } });
+addEventListener('pointercancel', (e) => { if (e.pointerId === drag.pid) { drag.swipe ? endSwipe(0, true) : endDrag(); } });
+addEventListener('touchmove', (e) => { if (drag.ghost || drag.swipe) e.preventDefault(); }, { passive: false });
 addEventListener('contextmenu', (e) => { if (drag.ghost || drag.timer) e.preventDefault(); });
 function cancelPending() { clearTimeout(drag.timer); drag.timer = 0; drag.li = null; drag.pid = null; }
+
+function swipeMove(dx) {
+  const li = drag.li; if (!li) return;
+  const x = Math.max(-ACT_W - 24, Math.min(window.innerWidth * 0.7, drag.base + dx));
+  $('.task-in', li).style.transform = `translateX(${x}px)`;
+  li.classList.toggle('swipe-r', x > 8);
+  const mark = x > 96 ? 1 : x < -ACT_W * 0.45 ? -1 : 0;
+  if (mark !== drag.crossed) { drag.crossed = mark; if (mark) buzz(8); }
+}
+function endSwipe(dx, cancelled) {
+  const li = drag.li; if (!li) return;
+  const inner = $('.task-in', li);
+  const x = drag.base + dx;
+  li.classList.remove('swiping');
+  inner.style.transform = '';
+  li.classList.remove('swipe-r');
+  const id = li.dataset.id;
+  if (!cancelled && x > 96) {
+    openLi = null; li.classList.remove('open');
+    toggle(id, $('.check', li));
+  } else if (!cancelled && x < -ACT_W * 0.45) {
+    li.classList.add('open'); inner.style.transform = `translateX(${-ACT_W}px)`; openLi = li; buzz(6);
+  } else { li.classList.remove('open'); if (openLi === li) openLi = null; }
+  Object.assign(drag, { li: null, pid: null, swipe: false });
+  setTimeout(() => (drag.moved = false), 60);
+}
 function beginDrag(e) {
   clearTimeout(drag.timer); drag.timer = 0;
   const li = drag.li; if (!li) return;
+  closeSwipe();
   const r = li.getBoundingClientRect();
   const g = li.cloneNode(true);
   g.className = 'task drag-ghost';
@@ -406,7 +497,7 @@ function beginDrag(e) {
   drag.ghost = g; drag.moved = true;
   li.classList.add('dragging');
   board.classList.add('dragging-active');
-  navigator.vibrate && navigator.vibrate(8);
+  buzz(10);
   getSelection && getSelection().removeAllRanges();
   dragMove();
   drag.raf = requestAnimationFrame(autoScroll);
@@ -435,7 +526,8 @@ function dragMove() {
 function autoScroll() {
   if (!drag.ghost) return;
   const { lastX: x, lastY: y } = drag, edge = 56;
-  if (x < edge) board.scrollLeft -= 14; else if (x > innerWidth - edge) board.scrollLeft += 14;
+  if (!document.body.classList.contains('view-overview') || !isMobile()) { if (x < edge) board.scrollLeft -= 14; else if (x > innerWidth - edge) board.scrollLeft += 14; }
+  if (isMobile() && document.body.classList.contains('view-overview')) { if (y < 140) board.scrollTop -= 12; else if (y > innerHeight - 120) board.scrollTop += 12; }
   const sec = document.elementFromPoint(x, y)?.closest('.day');
   if (sec) { const ul = $('.list', sec), r = ul.getBoundingClientRect(); if (y < r.top + 40) ul.scrollTop -= 10; else if (y > r.bottom - 40) ul.scrollTop += 10; }
   dragMove();
@@ -446,7 +538,7 @@ function endDrag() {
   cancelAnimationFrame(drag.raf);
   const { li, ghost } = drag;
   if (ghost && li) {
-    const sec = li.closest('.day'), ul = li.parentElement;
+    const sec = li.closest('.day');
     const prev = li.previousElementSibling, next = li.nextElementSibling;
     const t = S.tasks[li.dataset.id];
     ghost.remove();
@@ -454,12 +546,10 @@ function endDrag() {
     if (t && sec) {
       const pp = prev ? S.tasks[prev.dataset.id].position : null, np = next ? S.tasks[next.dataset.id].position : null;
       const pos = pp == null && np == null ? Date.now() : pp == null ? np - 1000 : np == null ? Math.max(pp + 1000, Date.now()) : (pp + np) / 2;
-      const date = sec.dataset.date || null;
       const todayCol = sec.dataset.key === todayKey();
-      const newDate = todayCol && t.date && t.date <= todayKey() ? t.date : date;   // staying in Today keeps its carried date
-      put({ ...t, date: todayCol && t.date && t.date < todayKey() ? todayKey() : newDate, position: pos });
+      const date = todayCol && t.date && t.date < todayKey() ? todayKey() : (sec.dataset.date || null);
+      put({ ...t, date: todayCol && t.date && t.date <= todayKey() ? (t.date < todayKey() ? todayKey() : t.date) : date, position: pos });
     }
-    ul && 0;
   }
   $$('.day.over').forEach((s) => s.classList.remove('over'));
   $$('.chip.drop').forEach((s) => s.classList.remove('drop'));
@@ -473,12 +563,10 @@ function endDrag() {
 function scrollToKey(key, focus) {
   const sec = $(`.day[data-key="${key}"]`, board);
   if (!sec) return;
-  const mobile = matchMedia('(max-width:760px)').matches;
-  board.scrollTo({ left: sec.offsetLeft - (mobile ? 16 : 28), behavior: reduceMotion.matches ? 'auto' : 'smooth' });
+  if (isMobile() && S.view !== 'focus') sec.scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'start' });
+  else board.scrollTo({ left: sec.offsetLeft - (isMobile() ? 16 : 28), behavior: reduceMotion.matches ? 'auto' : 'smooth' });
   setActive(key);
-  if (focus) setTimeout(() => $('.add input', sec).focus({ preventScroll: true }), mobile ? 280 : 0);
 }
-const scrollToKeySoon = (date) => setTimeout(() => $(`.day[data-key="${date}"]`) && scrollToKey(date), 60);
 function setActive(key) {
   activeKey = key;
   $$('.chip', strip).forEach((c) => {
@@ -487,17 +575,13 @@ function setActive(key) {
     if (on) c.scrollIntoView({ inline: 'center', block: 'nearest', behavior: reduceMotion.matches ? 'auto' : 'smooth' });
   });
 }
-let io;
-function observeActive() {
-  io && io.disconnect();
-  board.addEventListener('scroll', onScroll, { passive: true });
-  onScroll();
-}
-let scrollRaf = 0;
+let scrollRaf = 0, bound = false;
+function observeActive() { if (!bound) { board.addEventListener('scroll', onScroll, { passive: true }); bound = true; } onScroll(); }
 function onScroll() {
   if (scrollRaf) return;
   scrollRaf = requestAnimationFrame(() => {
     scrollRaf = 0;
+    if (isMobile() && S.view !== 'focus') return;
     const secs = $$('.day', board);
     const left = board.scrollLeft + 24;
     let best = secs[0];
@@ -505,39 +589,224 @@ function onScroll() {
     if (best && best.dataset.key !== activeKey) setActive(best.dataset.key);
   });
 }
-function focusAdd(key) {
-  const sec = $(`.day[data-key="${key}"]`, board);
-  if (!sec) return;
-  scrollToKey(key);
-  $('.add input', sec).focus({ preventScroll: true });
+
+/* ───────────── capture sheet ───────────── */
+const cap = { open: false, chip: 'today', custom: '' };
+const capEl = $('#capture'), cIn = $('#cInput'), cWhen = $('#cWhen'), cHint = $('#cHint'), cLog = $('#cLog'), cPrev = $('#cPreview');
+const chipDate = () => (cap.chip === 'today' ? todayKey() : cap.chip === 'tomorrow' ? addDays(todayKey(), 1) : cap.chip === 'someday' ? null : cap.custom);
+function setChip(v) {
+  cap.chip = v;
+  $$('#capChips .cchip[data-v]').forEach((c) => c.setAttribute('aria-checked', String(c.dataset.v === v)));
+  $('#cDateChip').setAttribute('aria-checked', String(v === 'date'));
+  $('#cDateLbl').textContent = v === 'date' ? whenLabel(cap.custom) : 'Date';
+  updateWhen();
+}
+function updateWhen() {
+  const p = parseWhen(cIn.value, new Date());
+  cWhen.textContent = p.date !== undefined ? `→ ${whenLabel(p.date)}` : cIn.value.trim() ? `→ ${whenLabel(chipDate())}` : '';
+}
+function positionSheet() {
+  const vv = window.visualViewport;
+  if (!vv || !cap.open) { capEl.style.bottom = ''; return; }
+  if (isMobile()) capEl.style.bottom = Math.max(0, innerHeight - vv.height - vv.offsetTop) + 'px';
+}
+window.visualViewport && ['resize', 'scroll'].forEach((ev) => visualViewport.addEventListener(ev, positionSheet));
+function openCapture({ prefill = '', voice = true } = {}) {
+  if (cap.open) { cIn.focus(); return; }
+  cap.open = true;
+  closeMenu(false); closeSwipe();
+  capEl.removeAttribute('inert');
+  capEl.classList.add('open');
+  document.body.classList.add('capturing');
+  cIn.value = prefill;
+  cPrev.hidden = true; cHint.hidden = true; cLog.textContent = '';
+  setChip('today');
+  cIn.focus({ preventScroll: true });          // inside the user gesture so iOS raises the keyboard
+  positionSheet();
+  buzz(8);
+  if (voice && S.voiceFirst && !prefill) startVoice();
+}
+function closeCapture() {
+  if (!cap.open) return;
+  cap.open = false;
+  stopVoice();
+  capEl.classList.remove('open', 'dragging');
+  capEl.style.transform = '';
+  capEl.style.bottom = '';
+  capEl.setAttribute('inert', '');
+  document.body.classList.remove('capturing');
+  cIn.blur();
+}
+function logAdded(title, date) {
+  const li = document.createElement('li');
+  li.innerHTML = `${I_OK}<span></span><em></em>`;
+  $('span', li).textContent = title; $('em', li).textContent = whenLabel(date);
+  cLog.prepend(li);
+  [...cLog.children].forEach((c, i) => { c.classList.toggle('old', i > 0); if (i > 2) c.remove(); });
+  capEl.classList.remove('pulse'); void capEl.offsetWidth; capEl.classList.add('pulse');
+}
+function addFromText(text, { keepFocus = true } = {}) {
+  const p = parseWhen(text, new Date());
+  const title = p.title.trim();
+  if (!title) return false;
+  const date = p.date !== undefined ? p.date : chipDate();
+  addTask(title, date);
+  logAdded(title, date);
+  buzz(12);
+  sfx.pop(S.muted);
+  if (keepFocus) cIn.focus({ preventScroll: true });
+  return { title, date };
+}
+cIn.addEventListener('input', () => { cHint.hidden = true; updateWhen(); });
+cIn.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (addFromText(cIn.value)) { cIn.value = ''; updateWhen(); } }
+  else if (e.key === 'Escape') { e.stopPropagation(); closeCapture(); }
+});
+$('#capForm').addEventListener('submit', (e) => e.preventDefault());
+$('#capChips').addEventListener('click', (e) => { const b = e.target.closest('.cchip[data-v]'); if (b) { setChip(b.dataset.v); cIn.focus({ preventScroll: true }); buzz(5); } });
+$('#cDate').addEventListener('change', (e) => { if (e.target.value) { cap.custom = e.target.value; setChip('date'); cIn.focus({ preventScroll: true }); } });
+$('#fab').addEventListener('click', () => openCapture());
+$('#capBackdrop').addEventListener('click', closeCapture);
+capEl.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCapture(); });
+
+// swipe the sheet down to dismiss
+{
+  let y0 = null, dy = 0;
+  capEl.addEventListener('touchstart', (e) => { if (e.target.closest('input,.chips-row,.cap-preview button,.mic')) { y0 = null; return; } y0 = e.touches[0].clientY; dy = 0; }, { passive: true });
+  capEl.addEventListener('touchmove', (e) => {
+    if (y0 == null) return;
+    dy = Math.max(0, e.touches[0].clientY - y0);
+    capEl.classList.add('dragging'); capEl.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  capEl.addEventListener('touchend', () => {
+    if (y0 == null) return;
+    capEl.classList.remove('dragging'); capEl.style.transform = '';
+    if (dy > 70) closeCapture();
+    y0 = null;
+  });
 }
 
+/* ── voice ── */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const voiceOK = () => !!SR && !(isIOS && standalone());
+let rec = null, heard = false;
+function voiceFallback(msg) {
+  stopVoice();
+  cHint.hidden = false;
+  cHint.textContent = msg || (isIOS ? 'Voice capture isn’t available in this mode. Tap the mic on your keyboard to dictate. Using Whisper Flow? Switch to it with the 🌐 key; iOS remembers it for this app.' : 'Voice capture isn’t available in this browser. Use your keyboard’s dictation key instead.');
+  cIn.focus({ preventScroll: true });
+}
+function startVoice() {
+  if (!voiceOK()) return voiceFallback();
+  if (rec) return stopVoice();
+  try {
+    rec = new SR();
+    rec.lang = navigator.language || 'en-US';
+    rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+    heard = false;
+    rec.onstart = () => { capEl.classList.add('listening'); $('#micBtn').setAttribute('aria-pressed', 'true'); cHint.hidden = false; cHint.textContent = 'Listening… just say it.'; buzz(10); };
+    rec.onresult = (e) => {
+      let t = '';
+      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      heard = true; cIn.value = t.trim(); updateWhen();
+    };
+    rec.onerror = (e) => { if (['not-allowed', 'service-not-allowed', 'audio-capture', 'language-not-supported'].includes(e.error)) voiceFallback('Microphone access is blocked. Allow it in your browser settings, or use your keyboard’s dictation key.'); };
+    rec.onend = () => {
+      const had = heard; const text = cIn.value.trim();
+      capEl.classList.remove('listening'); $('#micBtn').setAttribute('aria-pressed', 'false'); rec = null;
+      if (cHint.textContent.startsWith('Listening')) cHint.hidden = true;
+      if (had && text) handleVoiceText(text);
+    };
+    rec.start();
+  } catch { rec = null; voiceFallback(); }
+}
+function stopVoice() { if (rec) { try { rec.onend = null; rec.abort(); } catch {} rec = null; } capEl.classList.remove('listening'); $('#micBtn').setAttribute('aria-pressed', 'false'); }
+function splitVoice(t) { return t.split(/\s*\b(?:and then|also)\b\s*/i).map((s) => s.trim()).filter(Boolean); }
+let pvParts = [];
+function handleVoiceText(text) {
+  const parts = splitVoice(text);
+  if (parts.length > 1) {
+    pvParts = parts;
+    const ul = $('ul', cPrev); ul.textContent = '';
+    parts.forEach((p) => { const li = document.createElement('li'); const w = parseWhen(p, new Date()); li.textContent = w.title; const s = document.createElement('small'); s.textContent = whenLabel(w.date !== undefined ? w.date : chipDate()); li.append(s); ul.append(li); });
+    $('#pvAdd').textContent = `Add ${parts.length} tasks`;
+    cPrev.hidden = false;
+  } else if (addFromText(text, { keepFocus: false })) {
+    cIn.value = ''; updateWhen();
+    toast('Added by voice', { action: 'Undo', onAction: undoLastAdd, ms: 3000 });
+  }
+}
+let lastAdded = null;
+function undoLastAdd() { const t = Object.values(S.tasks).filter((x) => x.source === 'app').sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0]; if (t) removeTask(t.id); }
+$('#pvAdd').addEventListener('click', () => { pvParts.forEach((p) => addFromText(p, { keepFocus: false })); cIn.value = ''; cPrev.hidden = true; updateWhen(); cIn.focus({ preventScroll: true }); });
+$('#pvCancel').addEventListener('click', () => { cPrev.hidden = true; cIn.focus({ preventScroll: true }); });
+$('#micBtn').addEventListener('click', () => { if (voiceOK()) startVoice(); else voiceFallback(); });
+
+/* ───────────── global gestures: swipe up to capture, pull to refresh ───────────── */
+{
+  let g = null;
+  const ptr = $('#ptr');
+  document.addEventListener('touchstart', (e) => {
+    g = null;
+    if (e.touches.length !== 1 || cap.open || drag.ghost || drag.swipe || !isMobile()) return;
+    const el = e.target;
+    if (el.closest('dialog,.menu,.capture,input,.swipe-actions,.fab')) return;
+    const t = e.touches[0];
+    const list = el.closest('.list');
+    const atEnd = !list || list.scrollHeight - list.scrollTop - list.clientHeight < 3;
+    const roomy = !list || list.scrollHeight <= list.clientHeight + 2;
+    g = { x: t.clientX, y: t.clientY, axis: null, up: atEnd && (t.clientY > innerHeight * 0.7 || roomy), down: (!list || list.scrollTop <= 0) && (board.scrollTop <= 0), pull: 0 };
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!g || drag.ghost || drag.swipe) return;
+    const t = e.touches[0], dx = t.clientX - g.x, dy = t.clientY - g.y;
+    if (!g.axis && Math.hypot(dx, dy) > 12) g.axis = Math.abs(dy) > Math.abs(dx) * 1.4 ? 'v' : 'h';
+    if (g.axis !== 'v') return;
+    if (dy < -64 && g.up) { g = null; ptr.classList.remove('show'); openCapture(); return; }
+    if (dy > 10 && g.down) { g.pull = dy; ptr.textContent = dy > 80 ? 'Release to sync' : 'Pull to sync'; ptr.style.transform = `translate(-50%,${Math.min(dy, 110) - 70}px)`; ptr.classList.add('show'); }
+  }, { passive: true });
+  document.addEventListener('touchend', () => {
+    if (g && g.pull > 80) { buzz(8); ptr.textContent = 'Syncing…'; sync().finally(() => setTimeout(() => ptr.classList.remove('show'), 500)); }
+    else ptr.classList.remove('show');
+    g = null;
+  });
+}
+
+/* ───────────── keyboard ───────────── */
 addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) { if (e.key === 'Escape') e.target.blur(); return; }
-  if (document.querySelector('dialog[open]') || !menu.hidden) return;
-  if (e.target.closest && e.target.closest('.task') && (e.key === 'x' || e.key === 'e')) return;
-  const k = e.key.toLowerCase();
-  if (k === 'n') { e.preventDefault(); focusAdd(activeKey || 'today'); }
-  else if (k === 't') { e.preventDefault(); focusAdd(todayKey()); }
-  else if (k === 's') { e.preventDefault(); focusAdd('someday'); }
-  else if (k === 'm') { toggleMute(); }
-  else if (e.key === '?') { $('#helpSheet').showModal(); }
+  if (document.querySelector('dialog[open]') || !menu.hidden || cap.open) return;
+  const k = e.key;
+  if (e.target.closest && e.target.closest('.task') && /^[xXeE ]$|^(Delete|Backspace|Arrow.*)$/.test(k)) return;
+  if (k === '?') { $('#helpSheet').showModal(); return; }
+  if (k === 'Escape') { closeSwipe(); return; }
+  if (k === 'n' || k === 'N' || k === '/') { e.preventDefault(); openCapture({ voice: false }); return; }
+  if (k.length === 1 && /\S/.test(k)) { e.preventDefault(); openCapture({ prefill: k, voice: false }); updateWhen(); }
 });
 
-/* ───────────── sound toggle ───────────── */
-const ICON_ON = '<svg viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
-const ICON_OFF = '<svg viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z" fill="currentColor"/><path d="M16 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
-function renderSound() {
-  const b = $('#soundBtn');
-  b.innerHTML = S.muted ? ICON_OFF : ICON_ON;
-  b.setAttribute('aria-pressed', String(!S.muted));
-  b.setAttribute('aria-label', S.muted ? 'Sound off' : 'Sound on');
-}
-function toggleMute() { S.muted = !S.muted; persist(); renderSound(); if (!S.muted) sfx.pop(false); toast(S.muted ? 'Sound off' : 'Sound on', { ms: 1200 }); }
-$('#soundBtn').addEventListener('click', toggleMute);
-$('#helpBtn').addEventListener('click', () => $('#helpSheet').showModal());
+/* ───────────── settings / view ───────────── */
+const I_FOCUS = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.9"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
+const I_LIST = '<svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h14" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>';
+function renderView() { $('#viewBtn').innerHTML = S.view === 'focus' ? I_LIST : I_FOCUS; $('#viewBtn').title = S.view === 'focus' ? 'Show all days' : 'Focus on today'; $('#viewBtn').setAttribute('aria-label', $('#viewBtn').title); document.body.classList.toggle('view-focus', S.view === 'focus'); document.body.classList.toggle('view-overview', S.view !== 'focus'); }
+$('#viewBtn').addEventListener('click', () => { S.view = S.view === 'focus' ? 'overview' : 'focus'; persist(); renderView(); render(); board.scrollTo({ left: 0, top: 0 }); setActive(todayKey()); toast(S.view === 'focus' ? 'Focus view' : 'All days', { ms: 1200 }); });
+const setDlg = $('#settings');
+function openSettings() { $('#setSound').checked = !S.muted; $('#setHaptics').checked = S.haptics; $('#setVoice').checked = S.voiceFirst; setDlg.showModal(); }
+$('#settingsBtn').addEventListener('click', openSettings);
+$('#setSound').addEventListener('change', (e) => { S.muted = !e.target.checked; persist(); if (!S.muted) sfx.pop(false); });
+$('#setHaptics').addEventListener('change', (e) => { S.haptics = e.target.checked; persist(); buzz(15); });
+$('#setVoice').addEventListener('change', (e) => { S.voiceFirst = e.target.checked; persist(); });
+$('#setHelp').addEventListener('click', () => { setDlg.close(); $('#helpSheet').showModal(); });
+$('#setKey').addEventListener('click', () => { setDlg.close(); $('#lockErr').textContent = ''; lockDlg.showModal(); });
+$('#setCopy').addEventListener('click', async () => {
+  if (!S.passcode) { setDlg.close(); return lock('Connect this device first, then you can copy its setup link.'); }
+  const link = `${location.origin}/?key=${encodeURIComponent(S.passcode)}`;
+  try { await navigator.clipboard.writeText(link); toast('Setup link copied', { ms: 2000 }); }
+  catch { prompt('Copy your setup link:', link); }
+});
 $$('dialog [data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
 $$('dialog').forEach((d) => d.addEventListener('click', (e) => { if (e.target === d) d.close(); }));
 
@@ -552,12 +821,12 @@ function renderSync() {
   const txt = {
     sync: S.queue.length ? `Syncing ${S.queue.length} change${S.queue.length > 1 ? 's' : ''}…` : 'Up to date. Changes sync across your devices.',
     busy: 'Syncing…',
-    local: S.passcode ? 'Server storage isn’t set up yet, so tasks are saved on this device only.' : 'Tasks are saved on this device only. Add your passcode to sync.',
-    locked: 'The passcode was rejected. Enter it again to sync.',
+    local: S.passcode ? 'Server storage isn’t set up, so tasks are saved on this device only.' : 'Tasks are saved on this device only. Connect with your setup link to sync.',
+    locked: 'This device isn’t connected. Use your setup link to sync.',
     offline: `You’re offline. ${S.queue.length} change${S.queue.length === 1 ? '' : 's'} will sync when you’re back.`,
   }[S.mode];
   $('#syncText').textContent = txt;
-  $('#syncBtn').title = $('#syncBtn').ariaLabel = 'Sync: ' + txt;
+  $('#syncBtn').title = 'Sync: ' + txt;
 }
 async function sync() {
   if (syncing) { again = true; return; }
@@ -565,21 +834,19 @@ async function sync() {
   if (!navigator.onLine) return setMode('offline');
   syncing = true;
   try {
-    // 1. push queued writes (in order)
     while (S.queue.length) {
       const q = S.queue[0];
       const r = q.t === 'put'
         ? await api('/api/tasks', { method: 'POST', body: JSON.stringify(q.task) })
         : await api('/api/tasks?id=' + encodeURIComponent(q.id), { method: 'DELETE' });
-      if (r.status === 401) return lock('Passcode not accepted.');
+      if (r.status === 401) return lock('That key isn’t valid any more. Use your latest setup link.');
       if (r.status === 503) return setMode('local');
       if (!r.ok && r.status >= 500) throw new Error('server');
-      if (!r.ok && r.status !== 404) { console.warn('dropping bad write', await r.text()); }
+      if (!r.ok && r.status !== 404) console.warn('dropping bad write', await r.text());
       S.queue.shift(); persist();
     }
-    // 2. pull
     const r = await api('/api/tasks');
-    if (r.status === 401) return lock('Passcode not accepted.');
+    if (r.status === 401) return lock('That key isn’t valid any more. Use your latest setup link.');
     if (r.status === 503) return setMode('local');
     if (!r.ok) throw new Error('server');
     const { tasks } = await r.json();
@@ -592,12 +859,8 @@ async function sync() {
     }
     for (const id of Object.keys(S.tasks)) if (!seen.has(id) && !pending.has(id)) delete S.tasks[id];
     persist(); setMode('sync'); render();
-  } catch (e) {
-    setMode(navigator.onLine ? 'offline' : 'offline');
-  } finally {
-    syncing = false;
-    if (again) { again = false; scheduleFlush(); }
-  }
+  } catch { setMode('offline'); }
+  finally { syncing = false; if (again) { again = false; scheduleFlush(); } }
 }
 setInterval(() => { if (!document.hidden) sync(); }, 15000);
 addEventListener('focus', sync);
@@ -605,37 +868,48 @@ addEventListener('online', sync);
 addEventListener('offline', () => setMode('offline'));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { sync(); if (builtFor.split('|')[0] !== todayKey()) render(); } });
 
-/* lock / passcode */
+/* ───────────── auth: one-time setup link ───────────── */
 const lockDlg = $('#lock');
+function extractKey(raw) {
+  raw = String(raw || '').trim();
+  if (!raw) return '';
+  try { const u = new URL(raw); const k = u.searchParams.get('key'); if (k) return k; } catch {}
+  const m = raw.match(/[?&]key=([^&\s]+)/);
+  return m ? decodeURIComponent(m[1]) : raw;
+}
+async function adoptKey(raw) {
+  const key = extractKey(raw);
+  if (!key) return false;
+  const r = await fetch('/api/ping', { headers: { 'x-passcode': key } });
+  const j = await r.json();
+  if (!j.authed) return false;
+  storeKey(key); S.skipLock = false; persist();
+  return true;
+}
 function lock(msg) {
   setMode('locked');
   S.passcode = ''; persist();
+  document.cookie = 'done_key=; max-age=0; path=/';
   $('#lockErr').textContent = msg || '';
   if (!lockDlg.open) lockDlg.showModal();
-  $('#lockInput').focus();
 }
 $('#lockForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const code = $('#lockInput').value.trim();
-  if (!code) return;
+  const raw = $('#lockInput').value;
+  if (!raw.trim()) return;
   $('#lockGo').disabled = true;
   try {
-    const r = await fetch('/api/ping', { headers: { 'x-passcode': code } });
-    const j = await r.json();
-    if (j.authed) { S.passcode = code; S.skipLock = false; persist(); lockDlg.close(); $('#lockInput').value = ''; $('#lockErr').textContent = ''; sync(); toast('Unlocked. Syncing…', { ms: 1800 }); }
-    else $('#lockErr').textContent = 'That passcode doesn’t match.';
+    if (await adoptKey(raw)) { lockDlg.close(); $('#lockInput').value = ''; $('#lockErr').textContent = ''; sync(); toast('Connected. Syncing…', { ms: 1800 }); }
+    else $('#lockErr').textContent = 'That key doesn’t match. Try the setup link again.';
   } catch { $('#lockErr').textContent = 'Can’t reach the server. Check your connection.'; }
   $('#lockGo').disabled = false;
 });
 $('#lockSkip').addEventListener('click', () => { S.skipLock = true; persist(); lockDlg.close(); setMode('local'); });
-$('#syncBtn').addEventListener('click', () => { $('#syncSheet').showModal(); sync(); });
-$('#syncNow').addEventListener('click', () => { if (!S.passcode) { $('#syncSheet').close(); lockDlg.showModal(); } else { sync(); toast('Syncing…', { ms: 1200 }); $('#syncSheet').close(); } });
-$('#syncSignOut').addEventListener('click', () => { $('#syncSheet').close(); lock(''); });
+$('#syncBtn').addEventListener('click', () => { if (!S.passcode) { $('#lockErr').textContent = ''; lockDlg.showModal(); } else { $('#syncSheet').showModal(); sync(); } });
+$('#syncNow').addEventListener('click', () => { sync(); toast('Syncing…', { ms: 1200 }); $('#syncSheet').close(); });
 
 /* ───────────── install ───────────── */
 let deferred = null;
-const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 function renderInstall() { $('#installBtn').hidden = standalone() || !(deferred || isIOS); }
 addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferred = e; renderInstall(); });
 addEventListener('appinstalled', () => { deferred = null; renderInstall(); toast('Installed. Find Done on your home screen.'); });
@@ -646,12 +920,28 @@ $('#installBtn').addEventListener('click', async () => {
 });
 
 /* ───────────── boot ───────────── */
-renderSound();
-renderInstall();
+renderView();
 render();
-if (new URLSearchParams(location.search).has('new')) setTimeout(() => focusAdd('today'), 100);
-if (!S.passcode && !S.skipLock) setTimeout(() => { if (!lockDlg.open) { lockDlg.showModal(); } }, 400);
-else sync();
+(async () => {
+  const params = new URLSearchParams(location.search);
+  const keyParam = params.get('key');
+  if (keyParam) {
+    params.delete('key');
+    history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : '') + location.hash);
+    try {
+      if (await adoptKey(keyParam)) toast('Connected. You’re all set.', { ms: 2500 });
+      else { $('#lockErr').textContent = 'That setup link isn’t valid or has expired. Ask for a fresh one.'; lockDlg.showModal(); }
+    } catch { /* offline: fall through */ }
+  }
+  if (S.passcode) { if (S.passcode && !readCookie()) storeKey(S.passcode); sync(); }
+  else if (!S.skipLock && !lockDlg.open) setTimeout(() => !lockDlg.open && lockDlg.showModal(), 300);
+  const p2 = new URLSearchParams(location.search);
+  if (p2.has('capture') || p2.has('new')) {
+    p2.delete('capture'); p2.delete('new');
+    history.replaceState(null, '', location.pathname + (p2.toString() ? '?' + p2 : ''));
+    if (!lockDlg.open) setTimeout(() => openCapture(), 80);
+  }
+})();
 setInterval(() => { if (builtFor.split('|')[0] !== todayKey()) render(); }, 60000);
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
-window.__done = { S, render };
+window.__done = { S, render, openCapture };
