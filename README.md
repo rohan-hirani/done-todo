@@ -70,3 +70,7 @@ npm run dev      # http://localhost:3000, passcode "dev", in-memory fake databas
 ```
 
 Deploy: import the repo into Vercel (framework "Other", output directory `public`), add the env vars above.
+
+## Deployment notes
+
+The Vercel GitHub app must have access to this repo (github.com/settings/installations → Vercel → add `done-todo`) for push-to-deploy. Without that, deploy from the Vercel dashboard/CLI (`vercel --prod`).
