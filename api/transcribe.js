@@ -1,7 +1,7 @@
 // POST /api/transcribe  {audio: <base64>, mime: "audio/mp4"}  ->  {text}
 // GET  /api/transcribe  ->  {available: boolean}   (is GROQ_API_KEY configured?)
 // Without GROQ_API_KEY, POST returns 501 and the client falls back to on-device Whisper.
-const { cors, json, readBody } = require('./_lib');
+const { authed, cors, json, readBody } = require('./_lib');
 
 const MAX_BYTES = 3.2 * 1024 * 1024;   // decoded audio; Vercel request bodies are capped at 4.5 MB (base64 adds ~33%)
 const EXT = { 'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/aac': 'aac', 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/wav': 'wav', 'audio/mpeg': 'mp3' };
@@ -12,6 +12,7 @@ module.exports = async (req, res) => {
   const key = process.env.GROQ_API_KEY;
   if (req.method === 'GET') return json(res, 200, { available: !!key });
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' });
+  if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
   if (!key) return json(res, 501, { error: 'transcription not configured' });
   try {
     const b = readBody(req);

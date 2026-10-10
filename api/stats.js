@@ -1,4 +1,4 @@
-// GET /api/stats -> productivity numbers (see _stats.js for definitions). Open, like the rest of the API.
+// GET /api/stats -> productivity numbers (see _stats.js for definitions). Requires the login cookie or x-passcode header.
 const { authed, configured, load, normalize, cors, json } = require('./_lib');
 const { computeStats } = require('./_stats');
 

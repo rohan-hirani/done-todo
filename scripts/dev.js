@@ -1,6 +1,6 @@
 // Local dev server: serves /public and /api/* and, with an in-memory task store
 // (unless BLOB_READ_WRITE_TOKEN is set) so you can try everything offline.
-//   npm run dev        ->  http://localhost:3000   (passcode: "dev")
+//   npm run dev        ->  http://localhost:3000   (password: "rohan")
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -9,7 +9,6 @@ const PORT = process.env.PORT || 3000;
 const PUB = path.join(__dirname, '..', 'public');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json', '.json': 'application/json' };
 
-process.env.APP_PASSCODE = process.env.APP_PASSCODE || 'dev';
 process.env.DONE_DEV = process.env.BLOB_READ_WRITE_TOKEN ? '' : '1';   // in-memory store unless a Blob token is set
 
 http.createServer((req, res) => {
@@ -30,4 +29,4 @@ http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[path.extname(p)] || 'application/octet-stream' });
     fs.createReadStream(p).pipe(res);
   });
-}).listen(PORT, () => console.log(`Done dev server on http://localhost:${PORT} (passcode: ${process.env.APP_PASSCODE})`));
+}).listen(PORT, () => console.log(`Done dev server on http://localhost:${PORT} (password: rohan)`));
