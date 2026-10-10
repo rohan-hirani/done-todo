@@ -56,7 +56,7 @@ async function load() {
   if (!r || r.statusCode !== 200) return { data: { tasks: {}, deleted: {} }, etag: null };
   const text = await new Response(r.stream).text();
   const data = JSON.parse(text || '{}');
-  return { data: { tasks: data.tasks || {}, deleted: data.deleted || {} }, etag: r.blob.etag };
+  return { data: { tasks: data.tasks || {}, deleted: data.deleted || {} }, etag: String(r.blob.etag || '').replace(/^W\//, '') || null };
 }
 
 async function mutate(fn) {
