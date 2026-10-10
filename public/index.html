@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Done</title>
+<meta name="description" content="A calm, day-by-day to-do list.">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1013" media="(prefers-color-scheme: dark)">
+<meta name="color-scheme" content="light dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Done">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<a class="skip" href="#board">Skip to tasks</a>
+<header class="top">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="24" fill="var(--blue)"/><path d="M29 52l15 15 28-33" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/><circle cx="80" cy="20" r="7" fill="var(--red)"/></svg>
+    <h1>Done</h1>
+  </div>
+  <div class="stats">
+    <div class="ring-wrap" id="ringWrap" title="Today's progress">
+      <svg class="ring" viewBox="0 0 44 44" aria-hidden="true">
+        <circle class="ring-bg" cx="22" cy="22" r="18"/>
+        <circle class="ring-fg" id="ringFg" cx="22" cy="22" r="18" pathLength="100"/>
+      </svg>
+      <span class="ring-num" id="ringNum">0/0</span>
+    </div>
+    <span class="ring-cap" id="ringCap" aria-live="polite">today</span>
+    <div class="streak" id="streak" title="Daily streak">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.5 2.5c.4 3-1.2 4.6-2.7 6.2C8.3 10.3 7 11.9 7 14.5A5.5 5.5 0 0 0 12.5 20 5.5 5.5 0 0 0 18 14.5c0-2.2-1-3.7-2-4.8-.2 1.2-.8 2-1.6 2.4.5-3.6-.6-7.4-1.9-9.6z" fill="currentColor"/></svg>
+      <b id="streakNum">0</b>
+    </div>
+  </div>
+  <div class="actions">
+    <button class="icon-btn install" id="installBtn" hidden aria-label="Add to Home Screen" title="Add to Home Screen">
+      <svg viewBox="0 0 24 24"><path d="M12 4v10m0 0l-4-4m4 4l4-4M5 18h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Install</span>
+    </button>
+    <button class="icon-btn" id="soundBtn" aria-label="Sound on" aria-pressed="true" title="Sound (m)"></button>
+    <button class="icon-btn" id="syncBtn" aria-label="Sync status" title="Sync"><span class="dot" id="syncDot"></span></button>
+    <button class="icon-btn" id="helpBtn" aria-label="Keyboard shortcuts" title="Shortcuts (?)">?</button>
+  </div>
+</header>
+
+<nav class="strip" id="strip" aria-label="Jump to day"></nav>
+<main class="board" id="board" tabindex="-1"></main>
+
+<canvas id="fx" aria-hidden="true"></canvas>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<div class="menu-backdrop" id="menuBackdrop" hidden></div>
+<div class="menu" id="menu" role="menu" hidden>
+  <button role="menuitem" data-act="today">Today</button>
+  <button role="menuitem" data-act="tomorrow">Tomorrow</button>
+  <label class="menu-date" role="menuitem">Pick a date <input type="date" id="menuDate"></label>
+  <button role="menuitem" data-act="someday">Someday</button>
+  <hr>
+  <button role="menuitem" data-act="delete" class="danger">Delete</button>
+</div>
+
+<dialog id="lock" class="sheet">
+  <form method="dialog" id="lockForm">
+    <h2>Welcome to Done</h2>
+    <p>Enter your passcode once to sync across devices.</p>
+    <input id="lockInput" type="password" inputmode="text" autocomplete="current-password" placeholder="Passcode" aria-label="Passcode" autocapitalize="off" spellcheck="false">
+    <p class="err" id="lockErr" role="alert"></p>
+    <div class="row">
+      <button type="button" class="ghost" id="lockSkip">Use on this device only</button>
+      <button class="primary" id="lockGo">Unlock</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="iosSheet" class="sheet">
+  <h2>Add Done to your Home Screen</h2>
+  <ol class="steps">
+    <li><span class="n">1</span> Tap the <b>Share</b> button <svg class="share" viewBox="0 0 24 24"><path d="M12 15V3m0 0L8 7m4-4l4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg> in Safari's toolbar.</li>
+    <li><span class="n">2</span> Scroll and choose <b>Add to Home Screen</b>.</li>
+    <li><span class="n">3</span> Tap <b>Add</b>. Done opens like a real app.</li>
+  </ol>
+  <div class="row"><button class="primary" data-close>Got it</button></div>
+</dialog>
+
+<dialog id="syncSheet" class="sheet">
+  <h2>Sync</h2>
+  <p id="syncText"></p>
+  <div class="row">
+    <button class="ghost" id="syncSignOut">Change passcode</button>
+    <button class="primary" id="syncNow">Sync now</button>
+  </div>
+</dialog>
+
+<dialog id="helpSheet" class="sheet">
+  <h2>Keyboard shortcuts</h2>
+  <dl class="keys">
+    <dt><kbd>n</kbd></dt><dd>New task</dd>
+    <dt><kbd>t</kbd></dt><dd>Jump to Today</dd>
+    <dt><kbd>s</kbd></dt><dd>Jump to Someday</dd>
+    <dt><kbd>m</kbd></dt><dd>Mute / unmute</dd>
+    <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Move between tasks</dd>
+    <dt><kbd>Space</kbd> / <kbd>x</kbd></dt><dd>Complete task</dd>
+    <dt><kbd>Enter</kbd> / <kbd>e</kbd></dt><dd>Edit task</dd>
+    <dt><kbd>Alt</kbd>+<kbd>↑↓</kbd></dt><dd>Reorder</dd>
+    <dt><kbd>Alt</kbd>+<kbd>←→</kbd></dt><dd>Move to previous / next day</dd>
+    <dt><kbd>Del</kbd></dt><dd>Delete (undo available)</dd>
+  </dl>
+  <div class="row"><button class="primary" data-close>Close</button></div>
+</dialog>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
