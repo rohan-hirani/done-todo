@@ -5,16 +5,33 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function sha(s) { return crypto.createHash('sha256').update(String(s)).digest(); }
 
+// ── password gate ────────────────────────────────────────────────────────────
+// Password (case-insensitive) is "rohan" (override with APP_PASSCODE). Browsers get a 1-year httpOnly cookie holding
+// HMAC(DONE_SECRET, password); scripts/assistant may send the header "x-passcode: rohan" instead.
+const PASSWORD = () => String(process.env.APP_PASSCODE || 'rohan').trim().toLowerCase();
+const COOKIE = 'done_auth';
+function token() { return crypto.createHmac('sha256', process.env.DONE_SECRET || 'dev-only-secret').update('done-v1:' + PASSWORD()).digest('hex'); }
+function eq(a, b) { return crypto.timingSafeEqual(sha(a), sha(b)); }
+const passwordOk = (p) => eq(String(p == null ? '' : p).trim().toLowerCase(), PASSWORD());
+
 function passcodeFrom(req) {
   const h = req.headers['x-passcode'];
   if (h) return String(h);
   const a = req.headers.authorization || '';
   return a.replace(/^Bearer\s+/i, '');
 }
-
-// The app is intentionally open: no passcode is required. An x-passcode header is accepted and ignored.
-function authed() {
-  return true;
+function cookieFrom(req) {
+  const m = String(req.headers.cookie || '').match(new RegExp('(?:^|;\\s*)' + COOKIE + '=([^;]+)'));
+  return m ? m[1] : '';
+}
+function authed(req) {
+  const h = passcodeFrom(req);
+  if (h && passwordOk(h)) return true;
+  const c = cookieFrom(req);
+  return !!c && eq(c, token());
+}
+function setAuthCookie(res) {
+  res.setHeader('Set-Cookie', `${COOKIE}=${token()}; Max-Age=31536000; Path=/; HttpOnly; Secure; SameSite=Lax`);
 }
 
 function dayKey(offset = 0) {
@@ -124,4 +141,4 @@ function readBody(req) {
   return b && typeof b === 'object' ? b : {};
 }
 
-module.exports = { nyDate, dayDiff, dateOrNull, normalize, authed, configured, load, mutate, cors, json, readBody, parseDate, dayKey, UUID };
+module.exports = { passwordOk, setAuthCookie, nyDate, dayDiff, dateOrNull, normalize, authed, configured, load, mutate, cors, json, readBody, parseDate, dayKey, UUID };

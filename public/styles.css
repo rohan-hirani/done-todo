@@ -326,3 +326,19 @@ body.capturing .cap-backdrop{opacity:1;pointer-events:auto}
 .wk i{height:8px;border-radius:9px;background:var(--hover);overflow:hidden}.wk u{display:block;height:100%;background:var(--blue);border-radius:9px}
 .wk em{font-style:normal;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
 .ins-empty{color:var(--muted);text-align:center;padding:30px 0}
+
+/* password gate */
+.gate{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg)}
+.gate[hidden]{display:none}
+.gate-card{width:100%;max-width:340px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:12px}
+.gate-card .logo{width:64px;height:64px;margin-bottom:4px}
+.gate-card h1{margin:0;font-size:28px;letter-spacing:-.02em}
+.gate-sub{margin:0 0 6px;color:var(--muted);font-size:15px}
+.gate-card input{width:100%;font-size:18px;padding:14px 16px;border-radius:14px;border:1.5px solid var(--line);background:var(--surface);color:var(--ink);text-align:center;outline:none;transition:border-color .2s}
+.gate-card input:focus{border-color:var(--blue)}
+.gate-card.bad input{border-color:var(--red);animation:gshake .35s}
+.gate-card button{width:100%;padding:14px;font-size:17px;border-radius:14px}
+.gate-err{min-height:20px;margin:0;color:var(--red);font-size:14px}
+@keyframes gshake{25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+html.needs-auth body>:not(#gate):not(script){visibility:hidden}
+html.needs-auth #gate{display:flex}

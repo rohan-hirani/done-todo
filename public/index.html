@@ -16,9 +16,20 @@
 <link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
-<link rel="stylesheet" href="/styles.css?v=5">
+<link rel="stylesheet" href="/styles.css?v=6">
 </head>
 <body>
+<div id="gate" class="gate" hidden>
+  <form id="gateForm" class="gate-card" autocomplete="on">
+    <svg class="logo" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="24" fill="var(--blue)"/><path d="M29 52l15 15 28-33" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/><circle cx="80" cy="20" r="7" fill="var(--red)"/></svg>
+    <h1>Done</h1>
+    <p class="gate-sub">Enter your password to continue</p>
+    <input id="gatePw" type="password" name="password" placeholder="Password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" aria-label="Password" aria-describedby="gateErr">
+    <p id="gateErr" class="gate-err" role="alert"></p>
+    <button class="primary" type="submit" id="gateBtn">Unlock</button>
+  </form>
+</div>
+<script>try{if(!localStorage.getItem('done.auth'))document.documentElement.classList.add('needs-auth')}catch(e){}</script>
 <a class="skip" href="#board">Skip to tasks</a>
 <header class="top">
   <div class="brand">
@@ -104,12 +115,6 @@
   <button role="menuitem" data-act="delete" class="danger">Delete</button>
 </div>
 
-<dialog id="syncSheet" class="sheet">
-  <h2>Sync</h2>
-  <p id="syncText"></p>
-  <div class="row"><button class="ghost" data-close>Close</button><button class="primary" id="syncNow">Sync now</button></div>
-</dialog>
-
 <dialog id="insights" class="sheet insights">
   <div class="ins-head"><h2>Insights</h2><button class="ghost" data-close>Close</button></div>
   <div id="insBody"></div>
@@ -143,6 +148,6 @@
   <div class="row"><button class="primary" data-close>Close</button></div>
 </dialog>
 
-<script type="module" src="/app.js?v=5"></script>
+<script type="module" src="/app.js?v=6"></script>
 </body>
 </html>

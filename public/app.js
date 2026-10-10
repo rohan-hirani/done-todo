@@ -817,10 +817,10 @@ $('#micBtn').addEventListener('click', () => startVoice());
     if (!g.axis && Math.hypot(dx, dy) > 12) g.axis = Math.abs(dy) > Math.abs(dx) * 1.4 ? 'v' : 'h';
     if (g.axis !== 'v') return;
     if (dy < -64 && g.up) { g = null; ptr.classList.remove('show'); openCapture(); return; }
-    if (dy > 10 && g.down) { g.pull = dy; ptr.textContent = dy > 80 ? 'Release to sync' : 'Pull to sync'; ptr.style.transform = `translate(-50%,${Math.min(dy, 110) - 70}px)`; ptr.classList.add('show'); }
+    if (dy > 10 && g.down) { g.pull = dy; ptr.textContent = dy > 80 ? 'Release to refresh' : 'Pull to refresh'; ptr.style.transform = `translate(-50%,${Math.min(dy, 110) - 70}px)`; ptr.classList.add('show'); }
   }, { passive: true });
   document.addEventListener('touchend', () => {
-    if (g && g.pull > 80) { buzz(8); ptr.textContent = 'Syncing…'; sync().finally(() => setTimeout(() => ptr.classList.remove('show'), 500)); }
+    if (g && g.pull > 80) { buzz(8); ptr.textContent = 'Refreshing…'; sync().finally(() => setTimeout(() => ptr.classList.remove('show'), 500)); }
     else ptr.classList.remove('show');
     g = null;
   });
@@ -907,16 +907,35 @@ function scheduleFlush() { clearTimeout(flushTimer); flushTimer = setTimeout(syn
 function setMode(m) { if (S.mode !== m) { S.mode = m; renderSync(); } }
 function renderSync() {
   const dot = $('#syncDot');
-  dot.className = 'dot ' + ({ sync: S.queue.length ? 'busy' : 'ok', busy: 'busy', local: 'off', locked: 'warn', offline: 'warn' }[S.mode] || 'off');
+  dot.className = 'dot ' + ({ sync: S.queue.length ? 'busy' : 'ok', busy: 'busy', local: 'off', offline: 'warn' }[S.mode] || 'off');
   const txt = {
-    sync: S.queue.length ? `Syncing ${S.queue.length} change${S.queue.length > 1 ? 's' : ''}…` : 'Up to date. Changes sync across your devices.',
-    busy: 'Syncing…',
-    local: 'Server storage isn’t set up, so tasks are saved on this device only.',
-    offline: `You’re offline. ${S.queue.length} change${S.queue.length === 1 ? '' : 's'} will sync when you’re back.`,
+    sync: S.queue.length ? 'Saving…' : 'All saved',
+    busy: 'Saving…',
+    local: 'Storage isn’t set up yet.',
+    offline: `You’re offline. ${S.queue.length} change${S.queue.length === 1 ? '' : 's'} will save when you’re back.`,
   }[S.mode];
-  $('#syncText').textContent = txt;
-  $('#syncBtn').title = 'Sync: ' + txt;
+  $('#syncBtn').title = txt; $('#syncBtn').setAttribute('aria-label', txt);
 }
+/* ── password gate: entered once per device; long-lived cookie keeps it unlocked ── */
+const gate = $('#gate');
+function showGate() {
+  try { localStorage.removeItem('done.auth'); } catch {}
+  document.documentElement.classList.add('needs-auth'); gate.hidden = false;
+  setTimeout(() => $('#gatePw').focus(), 50);
+}
+function hideGate() { document.documentElement.classList.remove('needs-auth'); gate.hidden = true; }
+$('#gateForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = $('#gateErr'), card = $('#gateForm'), btn = $('#gateBtn');
+  card.classList.remove('bad'); err.textContent = ''; btn.disabled = true;
+  try {
+    const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: $('#gatePw').value }) });
+    if (r.ok) { try { localStorage.setItem('done.auth', '1'); } catch {} $('#gatePw').value = ''; hideGate(); sync(); return; }
+    err.textContent = r.status === 429 ? 'Too many tries. Give it a minute.' : 'That’s not quite right. Try again.';
+    card.classList.add('bad'); $('#gatePw').select();
+  } catch { err.textContent = 'Can’t reach the server. Check your connection.'; }
+  finally { btn.disabled = false; }
+});
 async function sync() {
   if (syncing) { again = true; return; }
   if (!navigator.onLine) return setMode('offline');
@@ -927,12 +946,14 @@ async function sync() {
       const r = q.t === 'put'
         ? await api('/api/tasks', { method: 'POST', body: JSON.stringify(q.task) })
         : await api('/api/tasks?id=' + encodeURIComponent(q.id), { method: 'DELETE' });
+      if (r.status === 401) { showGate(); return; }
       if (r.status === 503) return setMode('local');
       if (r.status === 409 || r.status === 429 || r.status >= 500) { setTimeout(sync, 2500); throw new Error('retry'); }
       if (!r.ok && r.status !== 404) console.warn('dropping bad write', await r.text());
       S.queue.shift(); persist();
     }
     const r = await api('/api/tasks');
+    if (r.status === 401) { showGate(); return; }
     if (r.status === 503) return setMode('local');
     if (!r.ok) throw new Error('server');
     const { tasks } = await r.json();
@@ -954,8 +975,7 @@ addEventListener('online', sync);
 addEventListener('offline', () => setMode('offline'));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { sync(); if (builtFor.split('|')[0] !== todayKey()) render(); } });
 
-$('#syncBtn').addEventListener('click', () => { $('#syncSheet').showModal(); sync(); });
-$('#syncNow').addEventListener('click', () => { sync(); toast('Syncing…', { ms: 1200 }); $('#syncSheet').close(); });
+$('#syncBtn').addEventListener('click', () => { sync(); toast(S.mode === 'offline' ? 'Offline. Will save when you’re back.' : 'Refreshed', { ms: 1200 }); });
 
 /* ───────────── install ───────────── */
 let deferred = null;
