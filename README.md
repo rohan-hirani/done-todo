@@ -17,20 +17,20 @@ A calm, day-by-day to-do list in the spirit of TeuxDeux. Installable PWA, works 
 - A web app **cannot launch Whisper Flow or switch keyboards**. If Rohan wants Whisper Flow on iPhone, he switches to its keyboard once with the 🌐 (globe) key while the capture field is focused; iOS remembers the last keyboard used per app, so it comes back next time.
 - Browsers only raise the on-screen keyboard from a real tap/swipe. Opening via `/?capture=1` from a shortcut focuses the field, but iOS may still need one tap to show the keyboard.
 
-### Signing in without typing
-Open the one-time setup link once per device: `https://<your-domain>/?key=<APP_PASSCODE>`. The key is saved in `localStorage` and a long-lived cookie and removed from the address bar. Android home-screen installs share that storage. **iOS home-screen apps have storage separate from Safari**, so on iOS use Settings → *Copy setup link* in one and *Enter key or link* in the other, or just open the setup link inside the installed app. API access stays header-based (`x-passcode`).
+### Access
+**The app and `/api/tasks` are open: anyone with the URL can read and edit the list.** There is no passcode, lock screen or setup link. Old `?key=` links are ignored, and an `x-passcode` header is still accepted (and ignored) so existing scripts keep working. Don't share the URL if you don't want others to see your tasks.
 
 ## Architecture
 
 ```
 public/            static PWA (no build step): index.html, app.js, fx.js (confetti), sound.js, sw.js, manifest, icons
-api/tasks.js       GET/POST/PATCH/DELETE  (passcode-protected; stores everything in one JSON document in a private Vercel Blob)
-api/ping.js        tells the client whether the server is configured / passcode is valid
-scripts/dev.js     local dev server with an in-memory store  (npm run dev, passcode "dev")
+api/tasks.js       GET/POST/PATCH/DELETE  (open, no auth; stores everything in one JSON document in a private Vercel Blob)
+api/ping.js        health check (is server storage configured)
+scripts/dev.js     local dev server with an in-memory store  (npm run dev)
 scripts/icons.py   regenerates the PNG icons
 ```
 
-The browser never holds a storage token. It stores a passcode in `localStorage` and sends it as the `x-passcode` header; the API compares it with `APP_PASSCODE`. The UI is optimistic and local-first: every change is applied instantly, cached in `localStorage` and pushed through an offline-safe write queue. The app polls every 15 s and on focus/online, so tasks added remotely appear on their own.
+The browser never holds a storage token; the API routes talk to Blob server-side. There is no authentication. The UI is optimistic and local-first: every change is applied instantly, cached in `localStorage` and pushed through an offline-safe write queue. The app polls every 15 s and on focus/online, so tasks added remotely appear on their own.
 
 ### Storage
 
@@ -41,7 +41,6 @@ All tasks live in one JSON document (`done/tasks.json`) in a **private Vercel Bl
 | name | value |
 | --- | --- |
 | `BLOB_READ_WRITE_TOKEN` | added automatically when you connect a Blob store to the project |
-| `APP_PASSCODE` | the passcode Rohan types once per device |
 | `APP_TZ` | optional, default `America/New_York`: what "today" means for API calls that omit `date` |
 
 Until a Blob store is connected the app still works fully on-device ("local only") and the API answers `503 storage_not_configured`.
@@ -50,7 +49,7 @@ Until a Blob store is connected the app still works fully on-device ("local only
 
 ```bash
 curl -X POST https://done-todo-rohan-hirani.vercel.app/api/tasks \
-  -H "x-passcode: <APP_PASSCODE>" -H "content-type: application/json" \
+  -H "content-type: application/json" \
   -d '{"title":"Call the dentist","date":"tomorrow"}'
 ```
 
@@ -61,10 +60,10 @@ Other routes: `GET /api/tasks`, `PATCH /api/tasks?id=<uuid>` (title, date, done,
 ## Develop
 
 ```bash
-npm run dev      # http://localhost:3000, passcode "dev", in-memory fake database
+npm run dev      # http://localhost:3000, in-memory fake database
 ```
 
-Deploy: import the repo into Vercel (framework "Other", output directory `public`), create a Blob store (private) and connect it to the project, set `APP_PASSCODE`.
+Deploy: import the repo into Vercel (framework "Other", output directory `public`), create a Blob store (private) and connect it to the project.
 
 ## Deployment notes
 

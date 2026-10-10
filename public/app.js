@@ -11,25 +11,18 @@ const isMobile = () => matchMedia('(max-width:760px)').matches;
 
 /* ───────────── state ───────────── */
 const saved = (() => { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } })();
-const readCookie = () => (document.cookie.match(/(?:^|;\s*)done_key=([^;]*)/) || [])[1] ? decodeURIComponent(document.cookie.match(/(?:^|;\s*)done_key=([^;]*)/)[1]) : '';
 const S = {
   tasks: saved.tasks || {},
   queue: saved.queue || [],
-  passcode: saved.passcode || readCookie() || '',
   muted: !!saved.muted,
   haptics: saved.haptics !== false,
   voiceFirst: !!saved.voiceFirst,
   view: saved.view || 'focus',
-  skipLock: !!saved.skipLock,
   days: saved.days || 7,
   mode: 'local',
 };
 function persist() {
-  localStorage.setItem(LS, JSON.stringify({ tasks: S.tasks, queue: S.queue, passcode: S.passcode, muted: S.muted, haptics: S.haptics, voiceFirst: S.voiceFirst, view: S.view, skipLock: S.skipLock, days: S.days }));
-}
-function storeKey(key) {
-  S.passcode = key; persist();
-  document.cookie = `done_key=${encodeURIComponent(key)}; max-age=${60 * 60 * 24 * 400}; path=/; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
+  localStorage.setItem(LS, JSON.stringify({ tasks: S.tasks, queue: S.queue, muted: S.muted, haptics: S.haptics, voiceFirst: S.voiceFirst, view: S.view, days: S.days }));
 }
 const buzz = (p) => { if (S.haptics && navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate(p); };
 
@@ -800,19 +793,12 @@ $('#setSound').addEventListener('change', (e) => { S.muted = !e.target.checked; 
 $('#setHaptics').addEventListener('change', (e) => { S.haptics = e.target.checked; persist(); buzz(15); });
 $('#setVoice').addEventListener('change', (e) => { S.voiceFirst = e.target.checked; persist(); });
 $('#setHelp').addEventListener('click', () => { setDlg.close(); $('#helpSheet').showModal(); });
-$('#setKey').addEventListener('click', () => { setDlg.close(); $('#lockErr').textContent = ''; lockDlg.showModal(); });
-$('#setCopy').addEventListener('click', async () => {
-  if (!S.passcode) { setDlg.close(); return lock('Connect this device first, then you can copy its setup link.'); }
-  const link = `${location.origin}/?key=${encodeURIComponent(S.passcode)}`;
-  try { await navigator.clipboard.writeText(link); toast('Setup link copied', { ms: 2000 }); }
-  catch { prompt('Copy your setup link:', link); }
-});
 $$('dialog [data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
 $$('dialog').forEach((d) => d.addEventListener('click', (e) => { if (e.target === d) d.close(); }));
 
 /* ───────────── sync ───────────── */
 let flushTimer = 0, syncing = false, again = false;
-const api = (path, opt = {}) => fetch(path, { ...opt, headers: { 'Content-Type': 'application/json', 'x-passcode': S.passcode, ...(opt.headers || {}) } });
+const api = (path, opt = {}) => fetch(path, { ...opt, headers: { 'Content-Type': 'application/json', ...(opt.headers || {}) } });
 function scheduleFlush() { clearTimeout(flushTimer); flushTimer = setTimeout(sync, 250); }
 function setMode(m) { if (S.mode !== m) { S.mode = m; renderSync(); } }
 function renderSync() {
@@ -821,8 +807,7 @@ function renderSync() {
   const txt = {
     sync: S.queue.length ? `Syncing ${S.queue.length} change${S.queue.length > 1 ? 's' : ''}…` : 'Up to date. Changes sync across your devices.',
     busy: 'Syncing…',
-    local: S.passcode ? 'Server storage isn’t set up, so tasks are saved on this device only.' : 'Tasks are saved on this device only. Connect with your setup link to sync.',
-    locked: 'This device isn’t connected. Use your setup link to sync.',
+    local: 'Server storage isn’t set up, so tasks are saved on this device only.',
     offline: `You’re offline. ${S.queue.length} change${S.queue.length === 1 ? '' : 's'} will sync when you’re back.`,
   }[S.mode];
   $('#syncText').textContent = txt;
@@ -830,7 +815,6 @@ function renderSync() {
 }
 async function sync() {
   if (syncing) { again = true; return; }
-  if (!S.passcode) return setMode('local');
   if (!navigator.onLine) return setMode('offline');
   syncing = true;
   try {
@@ -839,14 +823,12 @@ async function sync() {
       const r = q.t === 'put'
         ? await api('/api/tasks', { method: 'POST', body: JSON.stringify(q.task) })
         : await api('/api/tasks?id=' + encodeURIComponent(q.id), { method: 'DELETE' });
-      if (r.status === 401) return lock('That key isn’t valid any more. Use your latest setup link.');
       if (r.status === 503) return setMode('local');
       if (r.status === 409 || r.status === 429 || r.status >= 500) { setTimeout(sync, 2500); throw new Error('retry'); }
       if (!r.ok && r.status !== 404) console.warn('dropping bad write', await r.text());
       S.queue.shift(); persist();
     }
     const r = await api('/api/tasks');
-    if (r.status === 401) return lock('That key isn’t valid any more. Use your latest setup link.');
     if (r.status === 503) return setMode('local');
     if (!r.ok) throw new Error('server');
     const { tasks } = await r.json();
@@ -868,44 +850,7 @@ addEventListener('online', sync);
 addEventListener('offline', () => setMode('offline'));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { sync(); if (builtFor.split('|')[0] !== todayKey()) render(); } });
 
-/* ───────────── auth: one-time setup link ───────────── */
-const lockDlg = $('#lock');
-function extractKey(raw) {
-  raw = String(raw || '').trim();
-  if (!raw) return '';
-  try { const u = new URL(raw); const k = u.searchParams.get('key'); if (k) return k; } catch {}
-  const m = raw.match(/[?&]key=([^&\s]+)/);
-  return m ? decodeURIComponent(m[1]) : raw;
-}
-async function adoptKey(raw) {
-  const key = extractKey(raw);
-  if (!key) return false;
-  const r = await fetch('/api/ping', { headers: { 'x-passcode': key } });
-  const j = await r.json();
-  if (!j.authed) return false;
-  storeKey(key); S.skipLock = false; persist();
-  return true;
-}
-function lock(msg) {
-  setMode('locked');
-  S.passcode = ''; persist();
-  document.cookie = 'done_key=; max-age=0; path=/';
-  $('#lockErr').textContent = msg || '';
-  if (!lockDlg.open) lockDlg.showModal();
-}
-$('#lockForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const raw = $('#lockInput').value;
-  if (!raw.trim()) return;
-  $('#lockGo').disabled = true;
-  try {
-    if (await adoptKey(raw)) { lockDlg.close(); $('#lockInput').value = ''; $('#lockErr').textContent = ''; sync(); toast('Connected. Syncing…', { ms: 1800 }); }
-    else $('#lockErr').textContent = 'That key doesn’t match. Try the setup link again.';
-  } catch { $('#lockErr').textContent = 'Can’t reach the server. Check your connection.'; }
-  $('#lockGo').disabled = false;
-});
-$('#lockSkip').addEventListener('click', () => { S.skipLock = true; persist(); lockDlg.close(); setMode('local'); });
-$('#syncBtn').addEventListener('click', () => { if (!S.passcode) { $('#lockErr').textContent = ''; lockDlg.showModal(); } else { $('#syncSheet').showModal(); sync(); } });
+$('#syncBtn').addEventListener('click', () => { $('#syncSheet').showModal(); sync(); });
 $('#syncNow').addEventListener('click', () => { sync(); toast('Syncing…', { ms: 1200 }); $('#syncSheet').close(); });
 
 /* ───────────── install ───────────── */
@@ -924,22 +869,13 @@ renderView();
 render();
 (async () => {
   const params = new URLSearchParams(location.search);
-  const keyParam = params.get('key');
-  if (keyParam) {
-    params.delete('key');
-    history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : '') + location.hash);
-    try {
-      if (await adoptKey(keyParam)) toast('Connected. You’re all set.', { ms: 2500 });
-      else { $('#lockErr').textContent = 'That setup link isn’t valid or has expired. Ask for a fresh one.'; lockDlg.showModal(); }
-    } catch { /* offline: fall through */ }
-  }
-  if (S.passcode) { if (S.passcode && !readCookie()) storeKey(S.passcode); sync(); }
-  else if (!S.skipLock && !lockDlg.open) setTimeout(() => !lockDlg.open && lockDlg.showModal(), 300);
+  if (params.has('key')) { params.delete('key'); history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : '') + location.hash); }   // legacy setup links: ignored
+  sync();
   const p2 = new URLSearchParams(location.search);
   if (p2.has('capture') || p2.has('new')) {
     p2.delete('capture'); p2.delete('new');
     history.replaceState(null, '', location.pathname + (p2.toString() ? '?' + p2 : ''));
-    if (!lockDlg.open) setTimeout(() => openCapture(), 80);
+    setTimeout(() => openCapture(), 80);
   }
 })();
 setInterval(() => { if (builtFor.split('|')[0] !== todayKey()) render(); }, 60000);

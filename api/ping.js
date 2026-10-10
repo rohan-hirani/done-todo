@@ -1,6 +1,6 @@
 const { authed, configured, cors, json } = require('./_lib');
 
-// Tells the client whether the server is set up and whether its passcode is valid.
+// Health check: reports whether server storage is configured.
 module.exports = (req, res) => {
   cors(res);
   if (req.method === 'OPTIONS') return json(res, 204, {});

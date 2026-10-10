@@ -98,29 +98,6 @@
   <button role="menuitem" data-act="delete" class="danger">Delete</button>
 </div>
 
-<dialog id="lock" class="sheet">
-  <form method="dialog" id="lockForm">
-    <h2>This list is private</h2>
-    <p>Open your setup link, or paste your key (or the whole link) below. You only do this once per device.</p>
-    <input id="lockInput" type="password" inputmode="text" autocomplete="current-password" placeholder="Paste key or setup link" aria-label="Key or setup link" autocapitalize="off" spellcheck="false">
-    <p class="err" id="lockErr" role="alert"></p>
-    <div class="row">
-      <button type="button" class="ghost" id="lockSkip">Just this device</button>
-      <button class="primary" id="lockGo">Connect</button>
-    </div>
-  </form>
-</dialog>
-
-<dialog id="iosSheet" class="sheet">
-  <h2>Add Done to your Home Screen</h2>
-  <ol class="steps">
-    <li><span class="n">1</span> Tap the <b>Share</b> button <svg class="share" viewBox="0 0 24 24"><path d="M12 15V3m0 0L8 7m4-4l4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg> in Safari's toolbar.</li>
-    <li><span class="n">2</span> Scroll and choose <b>Add to Home Screen</b>.</li>
-    <li><span class="n">3</span> Tap <b>Add</b>. Done opens like a real app.</li>
-  </ol>
-  <div class="row"><button class="primary" data-close>Got it</button></div>
-</dialog>
-
 <dialog id="syncSheet" class="sheet">
   <h2>Sync</h2>
   <p id="syncText"></p>
@@ -133,11 +110,8 @@
   <label class="toggle"><span>Haptics<small>Gentle taps on gestures</small></span><input type="checkbox" id="setHaptics"></label>
   <label class="toggle"><span>Voice first<small>Start listening as soon as capture opens</small></span><input type="checkbox" id="setVoice"></label>
   <div class="set-actions">
-    <button class="ghost" id="setCopy">Copy setup link</button>
-    <button class="ghost" id="setKey">Enter key or link</button>
-    <button class="ghost" id="setHelp">Shortcuts</button>
+        <button class="ghost" id="setHelp">Shortcuts</button>
   </div>
-  <p class="fine">The setup link signs another device in with one tap. Keep it private.</p>
   <div class="row"><button class="primary" data-close>Done</button></div>
 </dialog>
 

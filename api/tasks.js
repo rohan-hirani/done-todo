@@ -31,7 +31,7 @@ function fields(b, { partial }) {
  * POST   /api/tasks              {title, date?, ...}  create (or upsert when "id" is given; newest updated_at wins)
  * PATCH  /api/tasks?id=<uuid>    partial update (title, date, done, position)
  * DELETE /api/tasks?id=<uuid>    delete
- * Auth: header "x-passcode: <APP_PASSCODE>" (or Authorization: Bearer <APP_PASSCODE>)
+ * No auth: the API is open to anyone with the URL (an x-passcode header is accepted and ignored).
  */
 module.exports = async (req, res) => {
   cors(res);

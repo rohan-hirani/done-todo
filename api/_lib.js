@@ -12,10 +12,9 @@ function passcodeFrom(req) {
   return a.replace(/^Bearer\s+/i, '');
 }
 
-function authed(req) {
-  const expected = process.env.APP_PASSCODE;
-  if (!expected) return false;
-  return crypto.timingSafeEqual(sha(passcodeFrom(req)), sha(expected));
+// The app is intentionally open: no passcode is required. An x-passcode header is accepted and ignored.
+function authed() {
+  return true;
 }
 
 function dayKey(offset = 0) {
