@@ -285,3 +285,19 @@ body.capturing .cap-backdrop{opacity:1;pointer-events:auto}
   .view-overview .day.today .hero{display:none}
   .task-in{padding-right:8px}
 }
+
+/* v4: voice recording states */
+.cap-rec{display:flex;align-items:center;gap:12px;margin-top:12px;background:var(--hover);border-radius:16px;padding:10px 14px}
+.cap-rec canvas{flex:1;min-width:0;height:44px;width:100%}
+.cap-rec span{font-variant-numeric:tabular-nums;font-weight:800;color:var(--red);min-width:38px;text-align:right}
+.cap-prog{margin-top:10px;height:6px;border-radius:9px;background:var(--hover);overflow:hidden}
+.cap-prog i{display:block;height:100%;width:0;background:var(--blue);border-radius:9px;transition:width .3s}
+.cap-hint.err{color:var(--red);font-weight:600}
+.cap-retry{margin:6px 0 0 2px;background:var(--hover);color:var(--ink)}
+.capture[data-voice=requesting] .mic,.capture[data-voice=transcribing] .mic,.capture[data-voice=downloading] .mic{opacity:.55}
+.capture[data-voice=recording] .mic{background:var(--ink);box-shadow:0 0 0 0 rgba(229,72,77,.5)}
+.capture[data-voice=recording] .mic svg{display:none}
+.capture[data-voice=recording] .mic::after{content:"";width:20px;height:20px;border-radius:5px;background:var(--red)}
+.capture[data-voice=transcribing] .mic svg,.capture[data-voice=downloading] .mic svg{animation:spin 1.2s linear infinite;opacity:.0}
+.capture[data-voice=transcribing] .mic::after,.capture[data-voice=downloading] .mic::after{content:"";width:22px;height:22px;border-radius:50%;border:3px solid #fff;border-top-color:transparent;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}

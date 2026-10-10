@@ -2,6 +2,7 @@
 import { burst, celebrate } from './fx.js';
 import * as sfx from './sound.js';
 import { parseWhen } from './nlp.js';
+import { record, canRecord, transcribe } from './voice.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -612,17 +613,17 @@ function openCapture({ prefill = '', voice = true } = {}) {
   capEl.classList.add('open');
   document.body.classList.add('capturing');
   cIn.value = prefill;
-  cPrev.hidden = true; cHint.hidden = true; cLog.textContent = '';
+  cPrev.hidden = true; cLog.textContent = ''; setVoice('idle', '');
   setChip('today');
   cIn.focus({ preventScroll: true });          // inside the user gesture so iOS raises the keyboard
   positionSheet();
   buzz(8);
-  if (voice && S.voiceFirst && !prefill) startVoice();
+  if (voice && S.voiceFirst && !prefill) startVoice({ auto: true });
 }
 function closeCapture() {
   if (!cap.open) return;
   cap.open = false;
-  stopVoice();
+  stopVoice({ cancel: true });
   capEl.classList.remove('open', 'dragging');
   capEl.style.transform = '';
   capEl.style.bottom = '';
@@ -650,7 +651,7 @@ function addFromText(text, { keepFocus = true } = {}) {
   if (keepFocus) cIn.focus({ preventScroll: true });
   return { title, date };
 }
-cIn.addEventListener('input', () => { cHint.hidden = true; updateWhen(); });
+cIn.addEventListener('input', () => { if (voiceState === 'error') setVoice('idle', ''); updateWhen(); });
 cIn.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (addFromText(cIn.value)) { cIn.value = ''; updateWhen(); } }
   else if (e.key === 'Escape') { e.stopPropagation(); closeCapture(); }
@@ -679,43 +680,84 @@ capEl.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCapture(
   });
 }
 
-/* ── voice ── */
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+/* ── voice: record in-app, transcribe with Groq (server) or Whisper on device ── */
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const voiceOK = () => !!SR && !(isIOS && standalone());
-let rec = null, heard = false;
+const cRec = $('#cRec'), cWave = $('#cWave'), cTime = $('#cTime'), cProg = $('#cProg'), cProgBar = $('#cProgBar'), vRetry = $('#vRetry');
+let session = null, lastBlob = null, voiceState = 'idle', levels = [];
+function setVoice(state, msg, { retry = false } = {}) {
+  voiceState = state;
+  capEl.dataset.voice = state;
+  capEl.classList.toggle('listening', state === 'recording');
+  $('#micBtn').setAttribute('aria-pressed', String(state === 'recording'));
+  $('#micBtn').setAttribute('aria-label', state === 'recording' ? 'Stop recording' : 'Dictate a task');
+  cRec.hidden = state !== 'recording';
+  cProg.hidden = state !== 'downloading';
+  cHint.hidden = !msg;
+  cHint.textContent = msg || '';
+  vRetry.hidden = !retry;
+  cHint.classList.toggle('err', state === 'error');
+}
+function drawWave(level) {
+  levels.push(Math.min(1, level * 5)); if (levels.length > 56) levels.shift();
+  const c = cWave, g = c.getContext('2d'), w = c.width, h = c.height, n = 56, bw = w / n;
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = getComputedStyle(capEl).getPropertyValue('--red') || '#e5484d';
+  levels.forEach((v, k) => { const bh = Math.max(4, v * h); g.beginPath(); g.roundRect((n - levels.length + k) * bw + 1.5, (h - bh) / 2, bw - 3, bh, 3); g.fill(); });
+}
+const fmtTime = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const micHelp = () => (isIOS ? 'Microphone is blocked. Open Settings → Done (or Safari) → Microphone and allow it, then tap the mic again.' : 'Microphone is blocked. Allow it from the lock icon in the address bar (or site settings), then tap the mic again.');
+async function startVoice({ auto = false } = {}) {
+  if (voiceState === 'recording') return stopVoice();
+  if (voiceState === 'requesting' || voiceState === 'transcribing' || voiceState === 'downloading') return;
+  if (!canRecord()) return voiceFallback('Recording isn’t supported here. Use your keyboard’s dictation key instead.');
+  cPrev.hidden = true;
+  setVoice('requesting', 'Allow microphone access…');
+  try {
+    levels = [];
+    session = await record({ onLevel: drawWave, onTick: (ms) => { cTime.textContent = fmtTime(ms); } });
+  } catch (e) {
+    session = null;
+    if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) return setVoice('error', auto ? 'Tap the mic to start recording.' : micHelp(), { retry: false });
+    if (e && e.name === 'NotFoundError') return setVoice('error', 'No microphone found.', { retry: false });
+    return setVoice('error', 'Couldn’t start the microphone. ' + (e && e.message || ''), { retry: true });
+  }
+  setVoice('recording', session.hasAnalyser ? 'Listening… stops when you pause. Tap the mic to finish.' : 'Recording… tap the mic to finish.');
+  buzz(10);
+  const s = session;
+  const res = await s.done;
+  if (session === s) session = null; else return;       // cancelled (sheet closed)
+  buzz(8);
+  if (res.reason === 'nospeech' || res.blob.size < 1500) return setVoice('error', 'Didn’t hear anything. Tap the mic and try again.');
+  await runTranscribe(res.blob);
+}
+async function runTranscribe(blob) {
+  lastBlob = blob;
+  setVoice('transcribing', 'Transcribing…');
+  try {
+    const { text } = await transcribe(blob, {
+      onStage: (st, backend) => { if (st === 'transcribing') setVoice('transcribing', backend === 'groq' ? 'Transcribing…' : 'Transcribing on this device…'); if (st === 'downloading') { cProgBar.style.width = '0%'; setVoice('downloading', 'Downloading voice model (~40 MB, one time)…'); } },
+      onProgress: (m) => { if (voiceState === 'downloading') { cProgBar.style.width = m.pct + '%'; cHint.textContent = `Downloading voice model (~40 MB, one time)… ${m.pct}%`; } },
+    });
+    lastBlob = null;
+    if (!cap.open) return;
+    if (!text) return setVoice('error', 'Didn’t catch that. Tap the mic and try again.');
+    setVoice('idle', '');
+    cIn.value = text; updateWhen();
+    handleVoiceText(text);
+  } catch (e) {
+    setVoice('error', 'Transcription failed: ' + (e && e.message || 'unknown error'), { retry: !!lastBlob });
+  }
+}
+function stopVoice({ cancel = false } = {}) {
+  if (!session) { if (cancel) setVoice('idle', ''); return; }
+  if (cancel) { const s = session; session = null; s.stop(); setVoice('idle', ''); } else session.stop();
+}
 function voiceFallback(msg) {
-  stopVoice();
-  cHint.hidden = false;
-  cHint.textContent = msg || (isIOS ? 'Voice capture isn’t available in this mode. Tap the mic on your keyboard to dictate. Using Whisper Flow? Switch to it with the 🌐 key; iOS remembers it for this app.' : 'Voice capture isn’t available in this browser. Use your keyboard’s dictation key instead.');
+  setVoice('error', msg);
   cIn.focus({ preventScroll: true });
 }
-function startVoice() {
-  if (!voiceOK()) return voiceFallback();
-  if (rec) return stopVoice();
-  try {
-    rec = new SR();
-    rec.lang = navigator.language || 'en-US';
-    rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
-    heard = false;
-    rec.onstart = () => { capEl.classList.add('listening'); $('#micBtn').setAttribute('aria-pressed', 'true'); cHint.hidden = false; cHint.textContent = 'Listening… just say it.'; buzz(10); };
-    rec.onresult = (e) => {
-      let t = '';
-      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
-      heard = true; cIn.value = t.trim(); updateWhen();
-    };
-    rec.onerror = (e) => { if (['not-allowed', 'service-not-allowed', 'audio-capture', 'language-not-supported'].includes(e.error)) voiceFallback('Microphone access is blocked. Allow it in your browser settings, or use your keyboard’s dictation key.'); };
-    rec.onend = () => {
-      const had = heard; const text = cIn.value.trim();
-      capEl.classList.remove('listening'); $('#micBtn').setAttribute('aria-pressed', 'false'); rec = null;
-      if (cHint.textContent.startsWith('Listening')) cHint.hidden = true;
-      if (had && text) handleVoiceText(text);
-    };
-    rec.start();
-  } catch { rec = null; voiceFallback(); }
-}
-function stopVoice() { if (rec) { try { rec.onend = null; rec.abort(); } catch {} rec = null; } capEl.classList.remove('listening'); $('#micBtn').setAttribute('aria-pressed', 'false'); }
+vRetry.addEventListener('click', () => { if (lastBlob) runTranscribe(lastBlob); else startVoice(); });
 function splitVoice(t) { return t.split(/\s*\b(?:and then|also)\b\s*/i).map((s) => s.trim()).filter(Boolean); }
 let pvParts = [];
 function handleVoiceText(text) {
@@ -731,11 +773,10 @@ function handleVoiceText(text) {
     toast('Added by voice', { action: 'Undo', onAction: undoLastAdd, ms: 3000 });
   }
 }
-let lastAdded = null;
 function undoLastAdd() { const t = Object.values(S.tasks).filter((x) => x.source === 'app').sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0]; if (t) removeTask(t.id); }
 $('#pvAdd').addEventListener('click', () => { pvParts.forEach((p) => addFromText(p, { keepFocus: false })); cIn.value = ''; cPrev.hidden = true; updateWhen(); cIn.focus({ preventScroll: true }); });
 $('#pvCancel').addEventListener('click', () => { cPrev.hidden = true; cIn.focus({ preventScroll: true }); });
-$('#micBtn').addEventListener('click', () => { if (voiceOK()) startVoice(); else voiceFallback(); });
+$('#micBtn').addEventListener('click', () => startVoice());
 
 /* ───────────── global gestures: swipe up to capture, pull to refresh ───────────── */
 {
