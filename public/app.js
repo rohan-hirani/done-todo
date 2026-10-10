@@ -399,7 +399,7 @@ function beginDrag(e) {
   const li = drag.li; if (!li) return;
   const r = li.getBoundingClientRect();
   const g = li.cloneNode(true);
-  g.className = 'task ghost';
+  g.className = 'task drag-ghost';
   g.style.width = r.width + 'px';
   drag.dx = drag.startX - r.left; drag.dy = drag.startY - r.top;
   document.body.appendChild(g);

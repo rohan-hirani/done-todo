@@ -4,5 +4,5 @@
   "private": true,
   "description": "Done — a minimalist day-by-day to-do PWA",
   "scripts": { "dev": "node scripts/dev.js" },
-  "engines": { "node": "20.x" }
+  "engines": { "node": "24.x" }
 }
