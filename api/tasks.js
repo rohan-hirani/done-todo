@@ -1,8 +1,9 @@
-const { authed, configured, db, cors, json, readBody, parseDate, UUID } = require('./_lib');
+const crypto = require('crypto');
+const { authed, configured, load, mutate, cors, json, readBody, parseDate, UUID } = require('./_lib');
 
-const COLS = 'id,title,date,done,done_at,position,created_at,updated_at,source';
+const validIso = (v) => { const d = new Date(v); return v && !isNaN(d) ? d.toISOString() : null; };
 
-function clean(b, { partial }) {
+function fields(b, { partial }) {
   const out = {};
   if (!partial || b.title !== undefined) {
     const t = typeof b.title === 'string' ? b.title.trim() : '';
@@ -13,7 +14,7 @@ function clean(b, { partial }) {
   else if (b.date !== undefined) out.date = parseDate(b.date);
   if (b.done !== undefined) {
     out.done = !!b.done;
-    out.done_at = out.done ? (b.done_at || new Date().toISOString()) : null;
+    out.done_at = out.done ? validIso(b.done_at) || new Date().toISOString() : null;
   }
   if (b.position !== undefined) {
     const p = Number(b.position);
@@ -21,15 +22,13 @@ function clean(b, { partial }) {
     out.position = p;
   }
   if (typeof b.source === 'string') out.source = b.source.slice(0, 40);
-  if (!partial && b.created_at) out.created_at = new Date(b.created_at).toISOString();
-  out.updated_at = new Date().toISOString();
   return out;
 }
 
 /**
  * GET    /api/tasks              list tasks
- * POST   /api/tasks              {title, date?, ...}  create (or upsert when "id" is given)
- * PATCH  /api/tasks?id=<uuid>    partial update
+ * POST   /api/tasks              {title, date?, ...}  create (or upsert when "id" is given; newest updated_at wins)
+ * PATCH  /api/tasks?id=<uuid>    partial update (title, date, done, position)
  * DELETE /api/tasks?id=<uuid>    delete
  * Auth: header "x-passcode: <APP_PASSCODE>" (or Authorization: Bearer <APP_PASSCODE>)
  */
@@ -42,40 +41,53 @@ module.exports = async (req, res) => {
   try {
     const id = req.query && req.query.id;
     if (req.method === 'GET') {
-      const rows = await db(`tasks?select=${COLS}&order=created_at.desc&limit=3000`);
-      return json(res, 200, { tasks: rows });
+      const { data } = await load();
+      const tasks = Object.values(data.tasks).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+      return json(res, 200, { tasks });
     }
     if (req.method === 'POST') {
       const b = readBody(req);
-      const row = clean(b, { partial: false });
-      if (b.id !== undefined) {
-        if (!UUID.test(String(b.id))) throw new Error('id must be a uuid');
-        row.id = b.id;
-        if (row.position === undefined) row.position = Date.now();
-        row.source = row.source || 'app';
-        const out = await db('tasks?on_conflict=id', { method: 'POST', body: row, prefer: 'resolution=merge-duplicates,return=representation' });
-        return json(res, 200, { task: out[0] });
-      }
-      row.source = row.source || 'api';
-      if (row.position === undefined) row.position = Date.now();
-      const out = await db('tasks', { method: 'POST', body: row, prefer: 'return=representation' });
-      return json(res, 201, { task: out[0] });
+      const f = fields(b, { partial: false });
+      const now = new Date().toISOString();
+      const upsert = b.id !== undefined;
+      if (upsert && !UUID.test(String(b.id))) throw new Error('id must be a uuid');
+      const tid = upsert ? String(b.id).toLowerCase() : crypto.randomUUID();
+      const stamp = (upsert && validIso(b.updated_at)) || now;
+      let created = true;
+      const task = await mutate((data) => {
+        const old = data.tasks[tid];
+        if (data.deleted[tid] && data.deleted[tid] >= stamp) return { skip: true, value: null };   // deleted after this write
+        if (old && old.updated_at > stamp) { created = false; return { skip: true, value: old }; } // newer version already stored
+        created = !old;
+        delete data.deleted[tid];
+        const t = {
+          id: tid, title: f.title, date: f.date, done: f.done ?? false, done_at: f.done_at ?? null,
+          position: f.position ?? Date.now(), created_at: (upsert && validIso(b.created_at)) || (old && old.created_at) || now,
+          updated_at: stamp, source: f.source || (old && old.source) || (upsert ? 'app' : 'api'),
+        };
+        data.tasks[tid] = t;
+        return t;
+      });
+      if (!task) return json(res, 200, { task: null, deleted: true });
+      return json(res, upsert ? 200 : created ? 201 : 200, { task });
     }
     if (req.method === 'PATCH') {
       if (!id || !UUID.test(id)) throw new Error('?id=<uuid> required');
-      const row = clean(readBody(req), { partial: true });
-      const out = await db(`tasks?id=eq.${id}`, { method: 'PATCH', body: row, prefer: 'return=representation' });
-      if (!out.length) return json(res, 404, { error: 'not found' });
-      return json(res, 200, { task: out[0] });
+      const f = fields(readBody(req), { partial: true });
+      const task = await mutate((data) => {
+        const old = data.tasks[id];
+        if (!old) return { skip: true, value: null };
+        return (data.tasks[id] = { ...old, ...f, updated_at: new Date().toISOString() });
+      });
+      return task ? json(res, 200, { task }) : json(res, 404, { error: 'not found' });
     }
     if (req.method === 'DELETE') {
       if (!id || !UUID.test(id)) throw new Error('?id=<uuid> required');
-      await db(`tasks?id=eq.${id}`, { method: 'DELETE' });
+      await mutate((data) => { delete data.tasks[id]; data.deleted[id] = new Date().toISOString(); return true; });
       return json(res, 200, { ok: true });
     }
     return json(res, 405, { error: 'method not allowed' });
   } catch (e) {
-    const bad = !e.status;
-    return json(res, bad ? 400 : 502, { error: e.message });
+    return json(res, e.status === 409 ? 409 : 400, { error: e.message });
   }
 };

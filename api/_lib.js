@@ -39,31 +39,47 @@ function parseDate(v) {
 }
 
 function configured() {
-  return !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+  return !!(process.env.BLOB_READ_WRITE_TOKEN || process.env.DONE_DEV);
 }
 
-async function db(path, { method = 'GET', body, prefer } = {}) {
-  const base = process.env.SUPABASE_URL.replace(/\/$/, '');
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const r = await fetch(`${base}/rest/v1/${path}`, {
-    method,
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      'Content-Type': 'application/json',
-      ...(prefer ? { Prefer: prefer } : {}),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const text = await r.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  if (!r.ok) {
-    const err = new Error((data && data.message) || `Supabase error ${r.status}`);
-    err.status = r.status;
-    throw err;
+// ── storage: one JSON document in a private Vercel Blob ──────────────────────
+// { tasks: { [id]: task }, deleted: { [id]: isoTimestamp } }
+// Writes use the blob ETag (optimistic concurrency) and retry on conflict, so
+// concurrent writers (phone, laptop, assistant) never clobber each other.
+const { put, get, BlobPreconditionFailedError } = require('@vercel/blob');
+const PATH = 'done/tasks.json';
+
+let mem = { tasks: {}, deleted: {} };   // DONE_DEV only (scripts/dev.js)
+async function load() {
+  if (process.env.DONE_DEV) return { data: JSON.parse(JSON.stringify(mem)), etag: null };
+  const r = await get(PATH, { access: 'private', useCache: false });
+  if (!r || r.statusCode !== 200) return { data: { tasks: {}, deleted: {} }, etag: null };
+  const text = await new Response(r.stream).text();
+  const data = JSON.parse(text || '{}');
+  return { data: { tasks: data.tasks || {}, deleted: data.deleted || {} }, etag: r.blob.etag };
+}
+
+async function mutate(fn) {
+  for (let i = 0; i < 6; i++) {
+    const { data, etag } = await load();
+    const result = await fn(data);
+    if (result && result.skip) return result.value;
+    if (process.env.DONE_DEV) { mem = data; return result; }
+    // prune old tombstones
+    const cutoff = new Date(Date.now() - 90 * 86400000).toISOString();
+    for (const k of Object.keys(data.deleted)) if (data.deleted[k] < cutoff) delete data.deleted[k];
+    try {
+      await put(PATH, JSON.stringify(data), {
+        access: 'private', contentType: 'application/json', addRandomSuffix: false,
+        allowOverwrite: true, ...(etag ? { ifMatch: etag } : {}),
+      });
+      return result;
+    } catch (e) {
+      if (e instanceof BlobPreconditionFailedError || /precondition|etag/i.test(String(e && e.message))) { await new Promise((r) => setTimeout(r, 40 + Math.random() * 120)); continue; }
+      throw e;
+    }
   }
-  return data;
+  const err = new Error('write conflict, please retry'); err.status = 409; throw err;
 }
 
 function cors(res) {
@@ -85,4 +101,4 @@ function readBody(req) {
   return b && typeof b === 'object' ? b : {};
 }
 
-module.exports = { authed, configured, db, cors, json, readBody, parseDate, dayKey, UUID };
+module.exports = { authed, configured, load, mutate, cors, json, readBody, parseDate, dayKey, UUID };

@@ -1,6 +1,6 @@
 # Done
 
-A calm, day-by-day to-do list in the spirit of TeuxDeux. Installable PWA, works offline, syncs through Supabase, and tasks can be added remotely with one HTTP call or one SQL statement.
+A calm, day-by-day to-do list in the spirit of TeuxDeux. Installable PWA, works offline, syncs through Vercel Blob, and tasks can be added remotely with one HTTP call or one SQL statement.
 
 - **Days**: Today, Tomorrow, then the next days as columns (desktop) or swipeable pages with a day strip (mobile), plus a **Someday** list.
 - **Quick add** at the top of every day (`Enter` to add, focus stays put so you can keep typing).
@@ -15,53 +15,39 @@ A calm, day-by-day to-do list in the spirit of TeuxDeux. Installable PWA, works 
 
 ```
 public/            static PWA (no build step): index.html, app.js, fx.js (confetti), sound.js, sw.js, manifest, icons
-api/tasks.js       GET/POST/PATCH/DELETE  (passcode-protected, talks to Supabase with the service-role key)
+api/tasks.js       GET/POST/PATCH/DELETE  (passcode-protected; stores everything in one JSON document in a private Vercel Blob)
 api/ping.js        tells the client whether the server is configured / passcode is valid
-supabase/schema.sql
-scripts/dev.js     local dev server with an in-memory fake Supabase  (npm run dev, passcode "dev")
+scripts/dev.js     local dev server with an in-memory store  (npm run dev, passcode "dev")
 scripts/icons.py   regenerates the PNG icons
 ```
 
-The browser never holds a database key. It stores a passcode in `localStorage` and sends it as the `x-passcode` header; the API compares it with `APP_PASSCODE`. The UI is optimistic and local-first: every change is applied instantly, cached in `localStorage` and pushed through an offline-safe write queue. The app polls every 15 s and on focus/online, so tasks added remotely appear on their own.
+The browser never holds a storage token. It stores a passcode in `localStorage` and sends it as the `x-passcode` header; the API compares it with `APP_PASSCODE`. The UI is optimistic and local-first: every change is applied instantly, cached in `localStorage` and pushed through an offline-safe write queue. The app polls every 15 s and on focus/online, so tasks added remotely appear on their own.
+
+### Storage
+
+All tasks live in one JSON document (`done/tasks.json`) in a **private Vercel Blob** store (free tier). Writes are guarded by the blob ETag (optimistic concurrency, automatic retry), each task carries `updated_at` and the newest write wins, and deletions leave a tombstone so a stale offline device cannot resurrect a deleted task.
 
 ### Environment variables (Vercel)
 
 | name | value |
 | --- | --- |
-| `SUPABASE_URL` | `https://<project-ref>.supabase.co` |
-| `SUPABASE_SERVICE_ROLE_KEY` | service role key (server only) |
+| `BLOB_READ_WRITE_TOKEN` | added automatically when you connect a Blob store to the project |
 | `APP_PASSCODE` | the passcode Rohan types once per device |
 | `APP_TZ` | optional, default `America/New_York`: what "today" means for API calls that omit `date` |
 
-Until `SUPABASE_*` are set the app still works fully on-device ("local only" status) and the API answers `503 storage_not_configured`.
-
-### Database
-
-Run `supabase/schema.sql` once (RLS enabled with no policies, so only the service role can touch it).
+Until a Blob store is connected the app still works fully on-device ("local only") and the API answers `503 storage_not_configured`.
 
 ## Add a task remotely
 
-### 1. HTTP API
-
 ```bash
-curl -X POST https://<DEPLOYMENT_URL>/api/tasks \
+curl -X POST https://done-todo-rohan-hirani.vercel.app/api/tasks \
   -H "x-passcode: <APP_PASSCODE>" -H "content-type: application/json" \
   -d '{"title":"Call the dentist","date":"tomorrow"}'
 ```
 
-`date` may be omitted (= today in `APP_TZ`), `"today"`, `"tomorrow"`, `"YYYY-MM-DD"`, or `null` / `"someday"` for the Someday list. Optional: `source`. Other routes: `GET /api/tasks`, `PATCH /api/tasks?id=<uuid>` (title, date, done, position), `DELETE /api/tasks?id=<uuid>`. A wrong passcode returns `401`.
+`date` may be omitted (= today in `APP_TZ`), `"today"`, `"tomorrow"`, `"YYYY-MM-DD"`, or `null` / `"someday"` for the Someday list. Optional: `source` (e.g. `"assistant"`). A wrong passcode returns `401`. Returns `201 {"task": {...}}`.
 
-### 2. Straight into Supabase (no passcode needed, e.g. via the Supabase connector's `execute_sql`)
-
-```sql
-insert into public.tasks (title, date, source)
-values ('Call the dentist', (now() at time zone 'America/New_York')::date, 'assistant');   -- today
--- tomorrow:  ((now() at time zone 'America/New_York')::date + 1)
--- specific:  '2026-10-15'
--- someday:   null
-```
-
-`position` defaults to "now", so new tasks land at the bottom of their day. The app picks it up within ~15 s (or immediately on focus).
+Other routes: `GET /api/tasks`, `PATCH /api/tasks?id=<uuid>` (title, date, done, position), `DELETE /api/tasks?id=<uuid>`. The app picks up remote changes within ~15 s, or immediately on focus.
 
 ## Develop
 
@@ -69,7 +55,7 @@ values ('Call the dentist', (now() at time zone 'America/New_York')::date, 'assi
 npm run dev      # http://localhost:3000, passcode "dev", in-memory fake database
 ```
 
-Deploy: import the repo into Vercel (framework "Other", output directory `public`), add the env vars above.
+Deploy: import the repo into Vercel (framework "Other", output directory `public`), create a Blob store (private) and connect it to the project, set `APP_PASSCODE`.
 
 ## Deployment notes
 
