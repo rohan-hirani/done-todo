@@ -159,7 +159,7 @@ function buildBoard() {
   observeActive();
 }
 
-const taskSig = (t, key) => [t.title, t.done, t.date, t.pinned, key === todayKey() ? (t.original_date || '') + (t.date < key ? t.date : '') + (t.rollovers || 0) : ''].join('\u0001');
+const taskSig = (t, key) => [t.title, t.done, t.date, t.pinned].join('\u0001');
 function makeLi(t) {
   const li = document.createElement('li');
   li.className = 'task';
@@ -168,14 +168,12 @@ function makeLi(t) {
     <div class="swipe-actions"><button class="act-star" aria-label="Star as top 3">${I_STAR}<span>Top 3</span></button><button class="act-move" aria-label="Move">${I_MOVE}<span>Move</span></button><button class="act-del" aria-label="Delete">${I_TRASH}<span>Delete</span></button></div>
     <div class="task-in">
       <button class="check" role="checkbox" aria-checked="false" aria-label="Complete task">${ICON_CHECK}</button>
-      <div class="body"><span><span class="star" aria-label="Top 3">★</span><span class="title" tabindex="0" role="button" aria-label="Edit task"></span></span><span class="carry" hidden></span></div>
+      <div class="body"><span><span class="star" aria-label="Top 3">★</span><span class="title" tabindex="0" role="button" aria-label="Edit task"></span></span></div>
       <button class="more" aria-haspopup="menu" aria-label="Move or delete task">${ICON_MORE}</button>
     </div>`;
   return li;
 }
 function updateLi(li, t, key) {
-  const from = key === todayKey() ? (t.date && t.date < key ? t.date : t.original_date && t.original_date < key ? t.original_date : null) : null;
-  const carried = !!from;
   const sig = taskSig(t, key);
   li.classList.toggle('done', t.done);
   li.classList.toggle('pinned', !!t.pinned && !t.done);
@@ -184,9 +182,6 @@ function updateLi(li, t, key) {
   li.dataset.sig = sig;
   if (!li.classList.contains('editing')) $('.title', li).textContent = t.title;
   $('.act-star span', li).textContent = t.pinned ? 'Unstar' : 'Top 3';
-  const c = $('.carry', li);
-  c.hidden = !carried;
-  if (carried) c.textContent = 'Carried over from ' + (from === addDays(key, -1) ? 'yesterday' : fmt(from, { weekday: 'short', month: 'short', day: 'numeric' })) + ((t.rollovers || 0) > 1 ? ` · ${t.rollovers} days` : '');
 }
 
 function render() {

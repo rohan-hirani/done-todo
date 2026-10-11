@@ -96,8 +96,6 @@ h1{font-size:22px;font-weight:800;letter-spacing:-.03em;margin:0}
 .body{flex:1;min-width:0;padding:11px 0 10px;display:flex;flex-direction:column;gap:2px}
 .title{display:inline;position:relative;align-self:flex-start;word-break:break-word;cursor:text;font-size:16.5px;line-height:1.35;color:var(--ink);transition:color .35s;background:linear-gradient(currentColor,currentColor) no-repeat 0 .72em/0% 1.6px;transition:color .35s,background-size .4s var(--ease)}
 .task.done .title{color:var(--muted);background-size:100% 1.6px}
-.carry{font-size:12px;font-weight:700;color:var(--red);display:inline-flex;align-items:center;gap:4px}
-.carry::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--red);opacity:.85}
 .edit{width:100%;font:inherit;font-size:16.5px;line-height:1.35;border:0;border-radius:8px;background:var(--hover);color:inherit;padding:2px 6px;margin:-2px -6px;outline:2px solid var(--blue)}
 .more{flex:none;width:36px;height:44px;display:grid;place-items:center;color:var(--muted);opacity:0;border-radius:10px;transition:opacity .15s}
 .task:hover .more,.more:focus-visible,.task:focus-within .more{opacity:1}
