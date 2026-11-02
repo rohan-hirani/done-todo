@@ -5,7 +5,12 @@
   "id": "/",
   "start_url": "/?source=pwa",
   "scope": "/",
+  "lang": "en",
+  "dir": "ltr",
   "display": "standalone",
+  "display_override": [
+    "standalone"
+  ],
   "orientation": "any",
   "background_color": "#f6f5f1",
   "theme_color": "#f6f5f1",
@@ -58,5 +63,6 @@
         }
       ]
     }
-  ]
+  ],
+  "prefer_related_applications": false
 }

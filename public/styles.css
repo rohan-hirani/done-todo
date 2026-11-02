@@ -445,3 +445,118 @@ body.sorting-lists,body.sorting-lists *{cursor:grabbing!important;user-select:no
 @media (min-width:761px){.day.list-col{min-width:250px;container-type:inline-size}}
 .list-name .lname{overflow-wrap:break-word;word-break:normal;hyphens:manual}
 @container (max-width:300px){.day.list-col h2{font-size:19px}.day.list-col .sub{font-size:12.5px}}
+
+/* ───────── v10: feels like a native iPhone app ───────── */
+/* No page-level zoom, rubber-banding, tap flashes or text-selection on app chrome; inputs stay selectable. */
+html{height:100%;overflow:hidden;background:var(--bg);-webkit-text-size-adjust:100%;text-size-adjust:100%;touch-action:manipulation;overscroll-behavior:none}
+body{height:var(--app-h,100dvh);touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+input,textarea,select,[contenteditable]{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
+button,a,label,.chip,.cchip,.check,.list-name,.arch-btn,.swatch{touch-action:manipulation;-webkit-touch-callout:none}
+img,svg{-webkit-user-drag:none}
+.board,.scroll,.strip,.chips-row,.sheet{-webkit-overflow-scrolling:touch}
+.scroll{overscroll-behavior-y:contain}
+.board{overscroll-behavior:contain}
+/* header: the safe-area aware app bar (stays put; content scrolls under it) */
+.top{position:relative;z-index:20;padding-right:max(16px,env(safe-area-inset-right))}
+/* 44px minimum touch targets */
+.icon-btn{min-width:44px;height:44px}
+.more{width:44px}
+.check{width:44px;margin-left:-10px}
+.qa-mic{width:44px;height:44px;margin-right:-4px}
+.set-list .grip{width:44px}
+.arch-btn{min-height:44px;padding:0 18px;display:flex;align-items:center}
+.primary,.ghost{min-height:44px}
+.seg{padding:3px}.seg button{min-height:38px;padding:0 14px}
+.chip{position:relative;display:inline-flex;align-items:center;min-height:36px}
+.chip::after{content:"";position:absolute;inset:-4px -3px}
+.toast button{min-height:36px;padding:0 4px}
+/* press feedback instead of sticky hover on touch screens */
+@media (hover:none){
+  .task:hover .task-in{background:var(--surface)}
+  .icon-btn:hover{background:none;color:var(--muted)}
+  .ghost:hover{background:none;color:var(--muted)}
+  .add.qa:hover{background:transparent}
+  .list-name:hover,.set-edit:hover{background:none}
+  .icon-btn:active,.ghost:active,.list-name:active,.set-edit:active{background:var(--hover);color:var(--ink)}
+  .menu button:active,.menu label:active{background:var(--hover)}
+}
+.icon-btn,.chip,.cchip,.primary,.arch-btn,.swatch,.qa-mic{transition:transform .14s var(--ease),background .15s,color .15s}
+.icon-btn:active,.chip:active,.cchip:active,.primary:active,.arch-btn:active,.qa-mic:active{transform:scale(.94)}
+.check:active svg{transform:scale(.88);transition:transform .1s}
+/* check-off: the row gives a soft green wash as the tick draws and the title strikes through */
+.task.pop .task-in{animation:rowDone .55s var(--ease)}
+@keyframes rowDone{0%{background:var(--surface)}30%{background:color-mix(in srgb,var(--ok) 13%,var(--surface))}100%{background:var(--surface)}}
+.task.done .title{transition:color .35s,background-size .4s var(--ease) .06s}
+
+/* phones: one edge-to-edge list at a time, like a native screen */
+@media (max-width:760px){
+  .top{gap:8px;padding:calc(env(safe-area-inset-top) + 6px) max(10px,env(safe-area-inset-right)) 4px max(14px,env(safe-area-inset-left))}
+  .top h1{font-size:21px}
+  .logo{width:27px;height:27px}
+  .actions{gap:0}
+  .strip{gap:4px;padding:2px max(12px,env(safe-area-inset-left)) 10px;scroll-padding-inline:12px}
+  .board{padding:0;gap:0;scroll-padding:0}
+  .day{border-radius:0;box-shadow:none;padding:14px max(4px,env(safe-area-inset-left)) 0 max(4px,env(safe-area-inset-right))}
+  .view-focus .board{scroll-snap-type:x mandatory}
+  .view-focus .day{flex:0 0 100vw;scroll-snap-stop:always;border-radius:22px 22px 0 0;box-shadow:0 -1px 0 var(--line),0 -10px 30px -22px rgba(20,20,30,.25)}
+  .view-focus .scroll{padding-bottom:calc(env(safe-area-inset-bottom) + 12px)}
+  body.kb-open .view-focus .scroll,body.kb-open.view-focus .scroll{padding-bottom:8px}
+  .view-overview .board{gap:10px;padding-bottom:calc(env(safe-area-inset-bottom) + 18px)}
+  .view-overview .day{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding-bottom:6px}
+  .day>header{padding:0 12px 6px 14px;min-height:44px;align-items:center}
+  .list-name{min-height:40px}
+  .task{margin:0 4px}
+  .add.qa{margin:6px 4px 8px;min-height:48px;background:var(--hover)}
+  .add.qa:focus-within{background:var(--hover)}
+  .add.qa input{padding:13px 0}
+  .menu{padding:8px 8px calc(8px + env(safe-area-inset-bottom) * .4);animation:sheetUp .28s var(--ease)}
+  .toast{bottom:calc(env(safe-area-inset-bottom) + 14px)}
+  body.kb-open .toast{bottom:12px}
+}
+/* long-press to reorder lists on touch: chips in the list strip (focus view) or list headers (all-lists view) */
+.chip.lifting{z-index:3;background:var(--lc,var(--ink));color:#fff;box-shadow:0 10px 24px -8px rgba(0,0,0,.35);transition:none}
+.chip.lifting .cname::before{background:rgba(255,255,255,.85)}
+.strip.sorting .chip:not(.lifting){transition:transform .2s var(--ease)}
+.day.lifting{position:relative;z-index:6;box-shadow:0 24px 50px -18px rgba(0,0,0,.4)!important;transition:none}
+body.sorting-touch{-webkit-user-select:none;user-select:none}
+body.sorting-touch .board{scroll-snap-type:none}
+
+/* sheets become native bottom sheets on phones: slide up, grabber, swipe down to dismiss */
+.sheet{overscroll-behavior:contain}
+.sheet.closing{animation:fadeOut .18s var(--ease) forwards}
+.sheet.closing::backdrop{animation:fadeOut .18s var(--ease) forwards}
+@keyframes fadeOut{to{opacity:0}}
+@keyframes sheetUp{from{transform:translateY(100%)}to{transform:none}}
+@keyframes sheetDown{to{transform:translateY(100%)}}
+@media (max-width:760px){
+  .sheet{position:fixed;inset:auto 0 0 0;margin:0;width:100%;max-width:100%;max-height:calc(var(--app-h,100dvh) - env(safe-area-inset-top) - 28px);overflow-y:auto;border-radius:26px 26px 0 0;padding:30px max(20px,env(safe-area-inset-left)) calc(env(safe-area-inset-bottom) + 20px) max(20px,env(safe-area-inset-right));box-shadow:0 -20px 60px -20px rgba(0,0,0,.4)}
+  .sheet::before{content:"";position:absolute;top:8px;left:50%;width:40px;height:5px;margin-left:-20px;border-radius:9px;background:var(--line)}
+  .sheet[open]{animation:sheetUp .36s var(--ease)}
+  .sheet.closing{animation:sheetDown .26s cubic-bezier(.4,0,1,1) forwards}
+  .sheet.dragging{animation:none;transition:none}
+  .sheet.settle{transition:transform .25s var(--ease)}
+  .insights{width:100%;max-height:calc(var(--app-h,100dvh) - env(safe-area-inset-top) - 28px)}
+  .sheet .row .primary{flex:1}
+}
+/* archive: inline on desktop, a bottom sheet on phones */
+.arch-sheet .as-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:2px}
+.arch-sheet h2{display:flex;align-items:center;gap:10px;margin:0;min-width:0}
+.arch-sheet h2 span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arch-sheet .ldot{width:12px;height:12px}
+.arch-sheet .as-sub{margin:2px 0 10px;font-size:14px;font-weight:600}
+.arch-sheet .arch-list{margin:0 -6px;border-top:1px solid var(--line)}
+.arch-sheet .arch-item:last-child{border-bottom:0}
+.arch-sheet .fine{text-align:center}
+.arch-sheet .as-empty{padding:28px 0;text-align:center;color:var(--muted);border:0;animation:none}
+@media (min-width:761px){.arch-sheet{max-width:460px;max-height:80vh;overflow-y:auto}}
+.steps b{font-weight:750}
+
+/* reduced motion: keep state changes, drop the movement */
+@media (prefers-reduced-motion:reduce){
+  .task.pop .task-in,.sheet[open],.menu{animation:none!important}
+  .icon-btn:active,.chip:active,.cchip:active,.primary:active,.arch-btn:active,.qa-mic:active{transform:none}
+}
+/* the closed voice sheet parks below the screen; hide it so its shadow doesn't peek over the home indicator */
+.capture{visibility:hidden;transition:transform .32s var(--ease),visibility 0s linear .32s}
+.capture.open{visibility:visible;transition:transform .32s var(--ease),visibility 0s}
+.capture.dragging{transition:none}

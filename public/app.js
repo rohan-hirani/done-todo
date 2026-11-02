@@ -148,7 +148,7 @@ const archOpen = new Set();
 const board = $('#board');
 const strip = $('#strip');
 let builtFor = '';
-let activeKey = 'personal';
+let activeKey = '';   // set on first scroll pass so the strip chip lights up on load
 
 const ICON_MORE = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg>';
 const ICON_CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle class="box" cx="12" cy="12" r="10"/><circle class="fill" cx="12" cy="12" r="10.8"/><path class="tick" d="M7 12.5l3.4 3.4L17 8.8"/></svg>';
@@ -176,7 +176,7 @@ function buildBoard() {
     sec.innerHTML = `<header title="Drag to reorder lists"><h2><button type="button" class="list-name" title="Rename or recolor this list"><i class="ldot" aria-hidden="true"></i><span class="lname"></span>${I_PEN}</button></h2><span class="sub"></span></header>
       <div class="scroll">
         <ul class="list" role="list"></ul>
-        <form class="add qa" autocomplete="off"><span class="plus" aria-hidden="true">+</span><input type="text" enterkeyhint="done" maxlength="500" placeholder="Add a task…" autocapitalize="sentences"><button type="button" class="qa-mic" title="Dictate a task">${I_MIC}</button></form>
+        <form class="add qa" autocomplete="off"><span class="plus" aria-hidden="true">+</span><input type="text" enterkeyhint="enter" maxlength="500" placeholder="Add a task…" autocapitalize="sentences" autocomplete="off"><button type="button" class="qa-mic" title="Dictate a task">${I_MIC}</button></form>
         <div class="arch" hidden>
           <button type="button" class="arch-btn" aria-expanded="false"></button>
           <ul class="arch-list" role="list" hidden></ul>
@@ -292,6 +292,7 @@ function render() {
   }
   renderStats(doneN, totalN);
   renderSync();
+  if (archDlg && archDlg.open) renderArchSheet();
 }
 
 const archDate = (t) => {
@@ -300,9 +301,18 @@ const archDate = (t) => {
   const day = k === today ? 'Today' : k === addDays(today, -1) ? 'Yesterday' : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', ...(k.slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' } : {}) });
   return `${day} · ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
 };
+function archItem(t, key) {
+  const li = document.createElement('li');
+  li.className = 'arch-item'; li.dataset.id = t.id;
+  li.innerHTML = `<button class="check" role="checkbox" aria-checked="true">${ICON_CHECK}</button><div class="arch-body"><span class="title"></span><time></time></div>`;
+  $('.check', li).setAttribute('aria-label', `Restore “${t.title}” to ${listName(key)}`);
+  $('.title', li).textContent = t.title;
+  $('time', li).textContent = archDate(t); if (t.done_at) $('time', li).dateTime = t.done_at;
+  return li;
+}
 function renderArchive(sec, key) {
   const box = $('.arch', sec), btn = $('.arch-btn', box), ul = $('.arch-list', box);
-  const done = archiveOf(key), open = archOpen.has(key) && done.length > 0;
+  const done = archiveOf(key), open = !isMobile() && archOpen.has(key) && done.length > 0;   // phones use the archive sheet
   box.hidden = !done.length;
   btn.textContent = open ? `Hide archive (${done.length})` : `View archive (${done.length})`;
   btn.setAttribute('aria-expanded', String(open));
@@ -312,16 +322,33 @@ function renderArchive(sec, key) {
   if (ul.dataset.sig === sig) return;
   ul.dataset.sig = sig;
   ul.textContent = '';
-  for (const t of done) {
-    const li = document.createElement('li');
-    li.className = 'arch-item'; li.dataset.id = t.id;
-    li.innerHTML = `<button class="check" role="checkbox" aria-checked="true">${ICON_CHECK}</button><div class="arch-body"><span class="title"></span><time></time></div>`;
-    $('.check', li).setAttribute('aria-label', `Restore “${t.title}” to ${listName(key)}`);
-    $('.title', li).textContent = t.title;
-    $('time', li).textContent = archDate(t); if (t.done_at) $('time', li).dateTime = t.done_at;
-    ul.appendChild(li);
-  }
+  for (const t of done) ul.appendChild(archItem(t, key));
 }
+// Phones: a list's archive opens as a bottom sheet instead of expanding inside the list.
+const archDlg = $('#archSheet');
+let archKey = null;
+function openArchiveSheet(key) { archKey = key; $('#asList').dataset.sig = ''; renderArchSheet(); archDlg.showModal(); buzz(6); }
+function renderArchSheet() {
+  if (!archKey) return;
+  const key = listIds().includes(archKey) ? archKey : 'personal', done = archiveOf(key), ul = $('#asList');
+  archDlg.style.setProperty('--lc', listColor(key));
+  $('#asName').textContent = `${listName(key)} archive`;
+  $('#asSub').textContent = done.length ? `${done.length} finished task${done.length === 1 ? '' : 's'}, newest first` : '';
+  const sig = key + '#' + done.map((t) => t.id + t.done_at + t.title).join('|');
+  if (ul.dataset.sig === sig) return;
+  ul.dataset.sig = sig;
+  ul.textContent = '';
+  if (!done.length) { const li = document.createElement('li'); li.className = 'arch-item as-empty'; li.textContent = 'Nothing in the archive.'; ul.appendChild(li); return; }
+  for (const t of done) ul.appendChild(archItem(t, key));
+}
+archDlg.addEventListener('click', (e) => {
+  const ai = e.target.closest('.arch-item');
+  if (ai && ai.dataset.id && e.target.closest('.check') && !ai.classList.contains('leaving')) {
+    restoreTask(ai.dataset.id, ai);
+    if (archiveOf(archKey).length <= 1) setTimeout(() => closeSheet(archDlg), 700);
+  }
+});
+archDlg.addEventListener('close', () => { archKey = null; });
 function restoreTask(id, li) {
   const t = S.tasks[id];
   if (!t || !t.done) return;
@@ -502,6 +529,7 @@ menu.addEventListener('keydown', (e) => {
 board.addEventListener('click', (e) => {
   if (drag.moved) return;
   const ab = e.target.closest('.arch-btn');
+  if (ab && isMobile()) { openArchiveSheet(ab.closest('.day').dataset.key); return; }
   if (ab) { const key = ab.closest('.day').dataset.key; archOpen.has(key) ? archOpen.delete(key) : archOpen.add(key); render(); if (archOpen.has(key)) ab.nextElementSibling.scrollIntoView({ block: 'nearest', behavior: reduceMotion.matches ? 'auto' : 'smooth' }); return; }
   const ai = e.target.closest('.arch-item');
   if (ai) { if (e.target.closest('.check') && !ai.classList.contains('leaving')) restoreTask(ai.dataset.id, ai); return; }
@@ -520,9 +548,11 @@ board.addEventListener('submit', (e) => {
   e.preventDefault();
   const form = e.target.closest('.add'); if (!form) return;
   const inp = $('input', form), list = form.closest('.day').dataset.key;
+  if (!inp.value.trim()) { inp.value = ''; inp.blur(); return; }   // return on an empty row puts the keyboard away
   const b0 = bang(inp.value), p = parseWhen(b0.title, new Date()), b1 = bang(p.date !== undefined ? p.title : b0.title);
-  if (addTask(b1.title, p.date !== undefined ? p.date : null, list, b0.high || b1.high)) { inp.value = ''; }
-  inp.focus();
+  if (addTask(b1.title, p.date !== undefined ? p.date : null, list, b0.high || b1.high)) { inp.value = ''; buzz(8); }
+  inp.focus({ preventScroll: true });   // same input keeps focus, so the keyboard stays up for the next task
+  requestAnimationFrame(() => revealAdd(form));
 });
 board.addEventListener('keydown', (e) => {
   const li = e.target.closest('.task');
@@ -553,6 +583,7 @@ board.addEventListener('keydown', (e) => {
 });
 
 /* ───────────── pointer gestures: drag-reorder (mouse / long-press) + swipe actions (touch) ───────────── */
+const touchSort = { on: false, timer: 0 };   // long-press list reordering on touch (see "v10" below)
 const drag = { li: null, ghost: null, moved: false, startX: 0, startY: 0, timer: 0, pid: null, dx: 0, dy: 0, touch: false, raf: 0, lastX: 0, lastY: 0, chipTimer: 0, swipe: false, base: 0, crossed: 0 };
 const ACT_W = 204;
 let openLi = null;
@@ -582,8 +613,8 @@ addEventListener('pointermove', (e) => {
 });
 addEventListener('pointerup', (e) => { if (e.pointerId === drag.pid) { drag.swipe ? endSwipe(e.clientX - drag.startX) : endDrag(); } });
 addEventListener('pointercancel', (e) => { if (e.pointerId === drag.pid) { drag.swipe ? endSwipe(0, true) : endDrag(); } });
-addEventListener('touchmove', (e) => { if (drag.ghost || drag.swipe) e.preventDefault(); }, { passive: false });
-addEventListener('contextmenu', (e) => { if (drag.ghost || drag.timer) e.preventDefault(); });
+addEventListener('touchmove', (e) => { if (drag.ghost || drag.swipe || touchSort.on) e.preventDefault(); }, { passive: false });
+addEventListener('contextmenu', (e) => { if (drag.ghost || drag.timer || touchSort.timer || touchSort.on) e.preventDefault(); });
 function cancelPending() { clearTimeout(drag.timer); drag.timer = 0; drag.li = null; drag.pid = null; }
 
 function swipeMove(dx) {
@@ -689,7 +720,7 @@ function scrollToKey(key, focus) {
   const sec = $(`.day[data-key="${key}"]`, board);
   if (!sec) return;
   if (isMobile() && S.view !== 'focus') sec.scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'start' });
-  else board.scrollTo({ left: sec.offsetLeft - (isMobile() ? 16 : 28), behavior: reduceMotion.matches ? 'auto' : 'smooth' });
+  else board.scrollTo({ left: sec.offsetLeft - (isMobile() ? 0 : 28), behavior: reduceMotion.matches ? 'auto' : 'smooth' });
   setActive(key);
 }
 function setActive(key) {
@@ -711,7 +742,7 @@ function onScroll() {
     const left = board.scrollLeft + 24;
     let best = secs[0];
     for (const s of secs) if (s.offsetLeft - 16 <= left + board.clientWidth * 0.3) best = s;
-    if (best && best.dataset.key !== activeKey) setActive(best.dataset.key);
+    if (best && (best.dataset.key !== activeKey || !strip.querySelector('.chip.active'))) setActive(best.dataset.key);   // also after the strip is rebuilt
   });
 }
 
@@ -723,7 +754,7 @@ function quickAdd(key, prefill = '') {
   if (prefill) inp.value = prefill;
   if (S.view === 'focus' || !isMobile()) scrollToKey(sec.dataset.key);
   inp.focus({ preventScroll: true });
-  inp.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+  revealAdd(inp.closest('.add'));
   if (prefill) inp.setSelectionRange(inp.value.length, inp.value.length);
 }
 board.addEventListener('click', (e) => {
@@ -942,7 +973,7 @@ $('#micBtn').addEventListener('click', () => startVoice());
   const ptr = $('#ptr');
   document.addEventListener('touchstart', (e) => {
     g = null;
-    if (e.touches.length !== 1 || cap.open || drag.ghost || drag.swipe || !isMobile()) return;
+    if (e.touches.length !== 1 || cap.open || drag.ghost || drag.swipe || touchSort.on || !isMobile()) return;
     const el = e.target;
     if (el.closest('dialog,.menu,.capture,input,.swipe-actions')) return;
     const t = e.touches[0];
@@ -950,7 +981,7 @@ $('#micBtn').addEventListener('click', () => startVoice());
     g = { x: t.clientX, y: t.clientY, axis: null, down: (!list || list.scrollTop <= 0) && (board.scrollTop <= 0), pull: 0 };
   }, { passive: true });
   document.addEventListener('touchmove', (e) => {
-    if (!g || drag.ghost || drag.swipe) return;
+    if (!g || drag.ghost || drag.swipe || touchSort.on) { if (g && touchSort.on) { g = null; ptr.classList.remove('show'); } return; }
     const t = e.touches[0], dx = t.clientX - g.x, dy = t.clientY - g.y;
     if (!g.axis && Math.hypot(dx, dy) > 12) g.axis = Math.abs(dy) > Math.abs(dx) * 1.4 ? 'v' : 'h';
     if (g.axis !== 'v') return;
@@ -1209,8 +1240,15 @@ $('#setSound').addEventListener('change', (e) => { S.muted = !e.target.checked; 
 $('#setHaptics').addEventListener('change', (e) => { S.haptics = e.target.checked; persist(); buzz(15); });
 $('#setVoice').addEventListener('change', (e) => { S.voiceFirst = e.target.checked; persist(); });
 $('#setHelp').addEventListener('click', () => { setDlg.close(); $('#helpSheet').showModal(); });
-$$('dialog [data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
-$$('dialog').forEach((d) => d.addEventListener('click', (e) => { if (e.target === d) d.close(); }));
+$$('dialog [data-close]').forEach((b) => b.addEventListener('click', () => closeSheet(b.closest('dialog'))));
+$$('dialog').forEach((d) => {
+  d.addEventListener('click', (e) => {
+    if (e.target !== d) return;
+    const r = d.getBoundingClientRect();
+    if (e.clientY < r.top || e.clientY > r.bottom || e.clientX < r.left || e.clientX > r.right) closeSheet(d);
+  });
+  d.addEventListener('cancel', (e) => { e.preventDefault(); closeSheet(d); });   // Esc slides it away too
+});
 
 /* ───────────── sync ───────────── */
 let flushTimer = 0, syncing = false, again = false;
@@ -1305,6 +1343,147 @@ $('#installBtn').addEventListener('click', async () => {
   if (deferred) { deferred.prompt(); await deferred.userChoice.catch(() => {}); deferred = null; renderInstall(); }
   else if (isIOS) $('#iosSheet').showModal();
 });
+
+/* ───────────── v10: native-app feel on phones ───────────── */
+// Sheets slide away instead of vanishing (bottom sheets on phones, see styles.css).
+function closeSheet(d) {
+  if (!d || !d.open || d.classList.contains('closing')) return;
+  if (reduceMotion.matches) { d.close(); return; }
+  const tok = (d._closeTok = {});
+  d.classList.add('closing');
+  const fin = () => { if (d._closeTok !== tok) return; d._closeTok = null; d.classList.remove('closing', 'dragging', 'settle'); d.style.transform = ''; if (d.open) d.close(); };
+  d.addEventListener('animationend', fin, { once: true });
+  setTimeout(fin, 420);
+}
+// Swipe a bottom sheet down to dismiss it (only when its content is scrolled to the top).
+$$('dialog.sheet').forEach((d) => {
+  let y0 = null, dy = 0, t0 = 0;
+  d.addEventListener('touchstart', (e) => {
+    y0 = null;
+    if (!isMobile() || e.touches.length !== 1 || d.scrollTop > 0 || e.target.closest('input,textarea,.grip,.swatches,.seg,.le-custom')) return;
+    y0 = e.touches[0].clientY; dy = 0; t0 = Date.now();
+  }, { passive: true });
+  d.addEventListener('touchmove', (e) => {
+    if (y0 == null) return;
+    dy = e.touches[0].clientY - y0;
+    if (dy <= 0) { d.style.transform = ''; if (dy < -8) y0 = null; return; }
+    if (e.cancelable) e.preventDefault();
+    d.classList.add('dragging');
+    d.style.transform = `translateY(${dy}px)`;
+  }, { passive: false });
+  const end = () => {
+    if (y0 == null) return;
+    y0 = null; d.classList.remove('dragging');
+    const v = dy / Math.max(1, Date.now() - t0);
+    if (dy > 110 || (dy > 40 && v > 0.6)) { buzz(6); closeSheet(d); }
+    else if (dy > 0) { d.classList.add('settle'); d.style.transform = ''; setTimeout(() => d.classList.remove('settle'), 260); }
+  };
+  d.addEventListener('touchend', end); d.addEventListener('touchcancel', end);
+});
+
+// Keyboard: on iOS the keyboard covers the page instead of resizing it. While typing in the board, size the app
+// to the visible area so the quick-add row sits right above the keyboard, and keep the page itself from panning.
+const isTyping = (el) => !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'color', 'date', 'range', 'button', 'submit'].includes(el.type)));
+function revealAdd(form) {
+  if (!form) return;
+  const sc = form.closest('.scroll'); if (!sc) return;
+  const fr = form.getBoundingClientRect(), sr = sc.getBoundingClientRect();
+  if (fr.bottom > sr.bottom - 6) sc.scrollTop += fr.bottom - sr.bottom + 10;
+  else if (fr.top < sr.top) sc.scrollTop -= sr.top - fr.top + 10;
+}
+let kbRaf = 0;
+function fitViewport() {
+  cancelAnimationFrame(kbRaf);
+  kbRaf = requestAnimationFrame(() => {
+    const vv = window.visualViewport; if (!vv) return;
+    const a = document.activeElement, inBoard = isTyping(a) && !!a.closest('#board');
+    const open = isTyping(a) && innerHeight - vv.height > 120;
+    document.body.classList.toggle('kb-open', open);
+    if (open && inBoard) {
+      document.documentElement.style.setProperty('--app-h', Math.round(vv.height) + 'px');
+      if (scrollY || vv.offsetTop) scrollTo(0, 0);
+      revealAdd(a.closest('.add'));
+    } else document.documentElement.style.removeProperty('--app-h');
+  });
+}
+if (window.visualViewport) { visualViewport.addEventListener('resize', fitViewport); visualViewport.addEventListener('scroll', fitViewport); }
+document.addEventListener('focusin', (e) => { if (isTyping(e.target)) { fitViewport(); setTimeout(fitViewport, 320); } });
+document.addEventListener('focusout', () => setTimeout(fitViewport, 60));
+// No pinch-zoom of the app chrome (iOS ignores user-scalable=no in Safari tabs; this covers it there).
+['gesturestart', 'gesturechange'].forEach((ev) => document.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
+
+// Long-press to reorder lists on touch: the chips in the list strip (one-list view on phones), or the list
+// headers (all-lists view on phones, columns on tablets). A quick swipe still scrolls; only a held finger lifts.
+{
+  const HOLD = 400;
+  let ts = null, eatClick = false;
+  const itemsOf = (box) => [...box.children].filter((n) => n.dataset && n.dataset.key);
+  function lift() {
+    touchSort.timer = 0;
+    if (!ts) return;
+    ts.on = touchSort.on = true;
+    const r = ts.el.getBoundingClientRect();
+    ts.gx = ts.x - r.left; ts.gy = ts.y - r.top;
+    ts.el.classList.add('lifting'); ts.box.classList.add('sorting'); document.body.classList.add('sorting-touch');
+    closeSwipe(); buzz(12);
+    ts.raf = requestAnimationFrame(tick);
+  }
+  function place() {
+    const { el, box, axis } = ts, p = axis === 'x' ? ts.lx : ts.ly;
+    let before = null;
+    for (const it of itemsOf(box)) {
+      if (it === el) continue;
+      const r = it.getBoundingClientRect(), mid = axis === 'x' ? r.left + r.width / 2 : r.top + r.height / 2;
+      if (p < mid) { before = it; break; }
+    }
+    if (before !== el.nextElementSibling && before !== el) { box.insertBefore(el, before); buzz(4); }
+    el.style.transform = '';
+    const r = el.getBoundingClientRect();
+    el.style.transform = axis === 'x' ? `translateX(${ts.lx - ts.gx - r.left}px) scale(1.06)` : `translateY(${ts.ly - ts.gy - r.top}px) scale(.985)`;
+  }
+  function tick() {
+    if (!ts || !ts.on) return;
+    const { box, axis } = ts, r = box.getBoundingClientRect(), edge = 48;
+    if (axis === 'x') { if (ts.lx < r.left + edge) box.scrollLeft -= 8; else if (ts.lx > r.right - edge) box.scrollLeft += 8; }
+    else { if (ts.ly < r.top + edge) box.scrollTop -= 10; else if (ts.ly > r.bottom - edge) box.scrollTop += 10; }
+    place();
+    ts.raf = requestAnimationFrame(tick);
+  }
+  function finish(save) {
+    clearTimeout(touchSort.timer); touchSort.timer = 0;
+    if (!ts) return;
+    const { el, box, on } = ts;
+    cancelAnimationFrame(ts.raf);
+    ts = null; touchSort.on = false;
+    if (!on) return;
+    el.classList.remove('lifting'); box.classList.remove('sorting'); document.body.classList.remove('sorting-touch');
+    el.style.transform = '';
+    eatClick = true; setTimeout(() => (eatClick = false), 120);
+    if (save) saveOrder(itemsOf(box).map((n) => n.dataset.key));
+    else render();
+  }
+  document.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' || ts) return;
+    const chip = e.target.closest('#strip .chip');
+    const head = !chip && e.target.closest('#board .day > header');
+    let el, box, axis;
+    if (chip) { el = chip; box = strip; axis = 'x'; }
+    else if (head && !isMobile()) { el = head.parentElement; box = board; axis = 'x'; }
+    else if (head && S.view !== 'focus') { el = head.parentElement; box = board; axis = 'y'; }
+    else return;
+    ts = { el, box, axis, pid: e.pointerId, x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, on: false, raf: 0 };
+    touchSort.timer = setTimeout(lift, HOLD);
+  }, true);
+  addEventListener('pointermove', (e) => {
+    if (!ts || e.pointerId !== ts.pid) return;
+    ts.lx = e.clientX; ts.ly = e.clientY;
+    if (!ts.on) { if (Math.hypot(e.clientX - ts.x, e.clientY - ts.y) > 10) finish(false); return; }   // it's a scroll
+    e.preventDefault();
+  }, { passive: false });
+  addEventListener('pointerup', (e) => { if (ts && e.pointerId === ts.pid) finish(true); });
+  addEventListener('pointercancel', (e) => { if (ts && e.pointerId === ts.pid) finish(ts.on); });
+  document.addEventListener('click', (e) => { if (eatClick) { eatClick = false; e.preventDefault(); e.stopPropagation(); } }, true);
+}
 
 /* ───────────── boot ───────────── */
 renderView();
