@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { parsePriority, parseList, listSettings, authed, configured, load, mutate, cors, json, readBody, parseDate, dateOrNull, normalize, UUID } = require('./_lib');
+const { parsePriority, parseList, listSettings, publicLists, authed, configured, load, mutate, cors, json, readBody, parseDate, dateOrNull, normalize, UUID } = require('./_lib');
 
 const validIso = (v) => { const d = new Date(v); return v && !isNaN(d) ? d.toISOString() : null; };
 
@@ -33,9 +33,10 @@ function fields(b, { partial }) {
 }
 
 /**
- * GET    /api/tasks              {tasks, lists}  (lists = [{id, name, color}] display settings)
+ * GET    /api/tasks              {tasks, lists}  (lists = [{id, name, color, order}], sorted by order)
  * POST   /api/tasks              {title, list?, date?, priority?, ...}  create (or upsert when "id" is given; newest updated_at wins)
- *                                 list: id (personal|website|ir|social) or the list's current display name; default personal
+ *                                 list: a list id or the list's current display name (case-insensitive); default personal
+ *                                 date: optional due date (YYYY-MM-DD, "today", "tomorrow"); omitted/null = no due date
  * PATCH  /api/tasks?id=<uuid>    partial update (title, list, date, done, position, priority)
  *                                 priority: "high" | "normal" (or true/false; `high` boolean also accepted)
  * DELETE /api/tasks?id=<uuid>    delete
@@ -53,7 +54,7 @@ module.exports = async (req, res) => {
       const { data } = await load();
       if (normalize(data)) await mutate(() => true).catch(() => {});   // persist rollover (mutate normalizes before fn); best-effort
       const tasks = Object.values(data.tasks).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-      return json(res, 200, { tasks, lists: listSettings(data).map(({ id, name, color }) => ({ id, name, color })) });
+      return json(res, 200, { tasks, lists: publicLists(data) });
     }
     if (req.method === 'POST') {
       const b = readBody(req);
@@ -65,7 +66,10 @@ module.exports = async (req, res) => {
       const stamp = (upsert && validIso(b.updated_at)) || now;
       let created = true;
       const task = await mutate((data) => {
-        if (f.list) f.list = parseList(f.list, listSettings(data));
+        if (f.list) {
+          try { f.list = parseList(f.list, listSettings(data)); }
+          catch (e) { if (!upsert) throw e; f.list = 'personal'; }   // app sync of a task whose list was deleted meanwhile
+        }
         const old = data.tasks[tid];
         if (data.deleted[tid] && data.deleted[tid] >= stamp) return { skip: true, value: null };   // deleted after this write
         if (old && old.updated_at > stamp) { created = false; return { skip: true, value: old }; } // newer version already stored

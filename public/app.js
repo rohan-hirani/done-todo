@@ -41,23 +41,31 @@ function persist() {
 const buzz = (p) => { if (S.haptics && navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate(p); };
 
 /* ───────────── topic lists ───────────── */
-// Stable ids never change; names and colors are user-editable and synced via the server (data.lists).
+// Lists come from the server (data.lists: [{id, name, color, order}]) so names, colors and order sync across devices.
+// Ids are stable slugs; "personal" always exists and is the fallback for tasks of unknown/deleted lists.
 const DEFAULT_LISTS = [
-  { id: 'personal', name: 'Personal', color: '#e5484d' },
-  { id: 'website', name: 'Strategy.com', color: '#2f6bff' },
-  { id: 'ir', name: 'Investor Relations', color: '#2fb36d' },
-  { id: 'social', name: 'Social Media', color: '#a855f7' },
+  { id: 'personal', name: 'Personal', color: '#e5484d', order: 0 },
+  { id: 'ir', name: 'Investor Relations', color: '#2fb36d', order: 1 },
+  { id: 'social', name: 'Social Media', color: '#a855f7', order: 2 },
+  { id: 'website', name: 'Strategy.com', color: '#2f6bff', order: 3 },
 ];
-const LIST_IDS = DEFAULT_LISTS.map((l) => l.id);
 const LIST_SHORT = { 'investor relations': 'IR', 'social media': 'Social' };
 const HEX = /^#[0-9a-f]{6}$/i;
-const lists = () => DEFAULT_LISTS.map((d) => { const s = (S.lists || []).find((x) => x && x.id === d.id) || {}; return { id: d.id, name: (s.name || '').trim() || d.name, color: HEX.test(s.color || '') ? s.color : d.color }; });
-const listCfg = (id) => lists().find((l) => l.id === id) || lists()[0];
-const listOf = (t) => (LIST_IDS.includes(t.list) ? t.list : 'personal');   // tasks from before lists existed live in Personal
+function lists() {
+  const src = Array.isArray(S.lists) && S.lists.length ? S.lists : DEFAULT_LISTS;
+  const seen = new Set(), out = [];
+  src.forEach((l, i) => { if (l && l.id && !seen.has(l.id)) { seen.add(l.id); out.push({ id: l.id, name: (l.name || '').trim() || l.id, color: HEX.test(l.color || '') ? l.color : '#7d838d', order: Number.isFinite(+l.order) ? +l.order : 1000 + i }); } });
+  if (!seen.has('personal')) out.unshift({ ...DEFAULT_LISTS[0], order: -1 });
+  return out.sort((a, b) => a.order - b.order);
+}
+const listIds = () => lists().map((l) => l.id);
+const listCfg = (id) => lists().find((l) => l.id === id) || lists().find((l) => l.id === 'personal');
+const listOf = (t) => (listIds().includes(t.list) ? t.list : 'personal');   // pre-lists tasks / deleted lists live in Personal
 const listName = (id) => listCfg(id).name;
 const listColor = (id) => listCfg(id).color;
-// Compact label for the mobile chip strip / capture summary: short names as-is, long multi-word names abbreviated.
+// Compact label for the mobile switcher / capture summary: short names as-is, long multi-word names abbreviated.
 const listShort = (id) => { const n = listName(id); if (LIST_SHORT[n.toLowerCase()]) return LIST_SHORT[n.toLowerCase()]; return n.length <= 13 ? n : n.split(' ')[0].slice(0, 13); };
+const slugify = (name) => String(name).toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || 'list';
 
 /* ───────────── dates ───────────── */
 const pad = (n) => String(n).padStart(2, '0');
@@ -74,7 +82,8 @@ function dayName(k) {
   if (k === addDays(t, -1)) return 'Yesterday';
   return fmt(k, { weekday: 'long' });
 }
-const dueLabel = (k) => (!k ? '' : k < todayKey() ? 'Overdue' : whenLabel(k));
+// Due-date badge: nothing when undated, "Overdue" when past, "Due Today" only when it's actually today, else "Due Mon, Nov 3".
+const dueLabel = (k) => (!k ? '' : k < todayKey() ? 'Overdue' : k === todayKey() ? 'Due Today' : 'Due ' + fmt(k, { weekday: 'short', month: 'short', day: 'numeric' }));
 const whenLabel = (k) => (k === null ? 'Someday' : k === todayKey() ? 'Today' : k === addDays(todayKey(), 1) ? 'Tomorrow' : fmt(k, { weekday: 'short', month: 'short', day: 'numeric' }));
 
 /* ───────────── data ops ───────────── */
@@ -91,7 +100,7 @@ function put(task) {
 function addTask(title, date, list = 'personal', high = false) {
   title = title.trim();
   if (!title) return null;
-  const t = { id: uid(), title, list: LIST_IDS.includes(list) ? list : 'personal', date, planned_date: date, original_date: null, rollovers: 0, done: false, done_at: null, priority: high ? 'high' : 'normal', pinned: !!high, position: Date.now(), created_at: nowIso(), updated_at: nowIso(), source: 'app' };
+  const t = { id: uid(), title, list: listIds().includes(list) ? list : 'personal', date, planned_date: date, original_date: null, rollovers: 0, done: false, done_at: null, priority: high ? 'high' : 'normal', pinned: !!high, position: Date.now(), created_at: nowIso(), updated_at: nowIso(), source: 'app' };
   put(t);
   return t;
 }
@@ -105,20 +114,7 @@ function removeTask(id) {
   return t;
 }
 
-/* ───────────── auto-rollover (mirrors the server; midnight-safe) ───────────── */
-const dayDiff = (a, b) => Math.round((fromKey(b) - fromKey(a)) / 86400000);
-function rollLocal() {
-  const today = todayKey();
-  let changed = false;
-  for (const t of Object.values(S.tasks)) {
-    if (!t.done && t.date && t.date < today) {
-      if (!t.original_date) t.original_date = t.date;
-      t.rollovers = (t.rollovers || 0) + dayDiff(t.date, today);
-      t.date = today; changed = true;
-    }
-  }
-  if (changed) persist();
-}
+/* No auto-rollover: `date` is an optional due date and never moves by itself (past-due tasks show Overdue). */
 
 /* ───────────── derived ───────────── */
 function streak() {
@@ -157,25 +153,30 @@ let activeKey = 'personal';
 const ICON_MORE = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg>';
 const ICON_CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle class="box" cx="12" cy="12" r="10"/><circle class="fill" cx="12" cy="12" r="10.8"/><path class="tick" d="M7 12.5l3.4 3.4L17 8.8"/></svg>';
 const I_PEN = '<svg class="pen" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const I_MIC = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>';
+const I_GRIP = '<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></g></svg>';
 const I_BANG = '<svg viewBox="0 0 24 24"><path d="M12 4.5v10" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="19.2" r="1.8" fill="currentColor"/></svg>';
 const I_MOVE = '<svg viewBox="0 0 24 24"><path d="M4 12h14m-5-5l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const I_TRASH = '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2m-6 0l1 12h6l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const I_OK = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
+// (Re)built whenever the set or order of lists changes; names/colors are painted by applyLists().
 function buildBoard() {
-  if (builtFor === 'lists') return;
-  builtFor = 'lists';
+  const sig = listIds().join('|');
+  if (builtFor === sig) return;
+  builtFor = sig;
   board.textContent = '';
   strip.textContent = '';
+  $('#capLists').innerHTML = lists().map((c) => `<button type="button" class="cchip" role="radio" data-list="${c.id}"></button>`).join('');
+  $('#menuLists').innerHTML = lists().map((c) => `<button role="menuitem" data-act="list:${c.id}"></button>`).join('');
   lists().forEach((c) => {
     const sec = document.createElement('section');
     sec.className = 'day list-col';
     sec.dataset.key = c.id;
-    sec.innerHTML = `<header><h2><button type="button" class="list-name" title="Rename or recolor this list"><i class="ldot" aria-hidden="true"></i><span class="lname"></span>${I_PEN}</button></h2><span class="sub"></span></header>
-      <form class="add" autocomplete="off"><span class="plus" aria-hidden="true">+</span><input type="text" enterkeyhint="done" maxlength="500"></form>
+    sec.innerHTML = `<header title="Drag to reorder lists"><h2><button type="button" class="list-name" title="Rename or recolor this list"><i class="ldot" aria-hidden="true"></i><span class="lname"></span>${I_PEN}</button></h2><span class="sub"></span></header>
       <div class="scroll">
         <ul class="list" role="list"></ul>
-        <p class="empty">Nothing open here. Add something.</p>
+        <form class="add qa" autocomplete="off"><span class="plus" aria-hidden="true">+</span><input type="text" enterkeyhint="done" maxlength="500" placeholder="Add a task…" autocapitalize="sentences"><button type="button" class="qa-mic" title="Dictate a task">${I_MIC}</button></form>
         <div class="arch" hidden>
           <button type="button" class="arch-btn" aria-expanded="false"></button>
           <ul class="arch-list" role="list" hidden></ul>
@@ -205,8 +206,9 @@ function applyLists() {
       sec.style.setProperty('--lc', c.color);
       sec.setAttribute('aria-label', c.name);
       $('.lname', sec).textContent = c.name;
-      $('.list-name', sec).setAttribute('aria-label', `${c.name}. Edit list name and color`);
-      const inp = $('.add input', sec); inp.placeholder = `Add to ${c.name}`; inp.setAttribute('aria-label', `Add task to ${c.name}`);
+      $('.list-name', sec).setAttribute('aria-label', `${c.name}. Edit list`);
+      $('.add input', sec).setAttribute('aria-label', `Add a task to ${c.name}`);
+      $('.qa-mic', sec).setAttribute('aria-label', `Dictate a task for ${c.name}`);
       $('.arch-list', sec).setAttribute('aria-label', `${c.name} archive`);
     }
     const chip = strip.querySelector(`.chip[data-key="${c.id}"]`);
@@ -241,14 +243,14 @@ function updateLi(li, t, key) {
   if (!li.classList.contains('editing')) $('.title', li).textContent = t.title;
   $('.act-star span', li).textContent = isHigh(t) ? 'Normal' : 'Priority';
   const due = $('.due', li), lbl = t.done ? '' : dueLabel(t.date);
-  due.hidden = !lbl; due.textContent = lbl ? `Due ${lbl === 'Overdue' ? 'earlier' : lbl}` : '';
+  due.hidden = !lbl; due.textContent = lbl;
   due.classList.toggle('soon', !!t.date && t.date <= todayKey());
+  due.classList.toggle('overdue', !!t.date && t.date < todayKey());
 }
 
 function render() {
-  applyLists();
-  rollLocal();
   buildBoard();
+  applyLists();
   document.body.classList.toggle('view-focus', S.view === 'focus');
   document.body.classList.toggle('view-overview', S.view !== 'focus');
   const today = todayKey();
@@ -539,8 +541,8 @@ board.addEventListener('keydown', (e) => {
     requestAnimationFrame(() => focusTitle($(`.task[data-id="${id}"]`)));
   } else if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
     e.preventDefault();
-    const t = S.tasks[id], cur = LIST_IDS.indexOf(listOf(t));
-    const nxt = LIST_IDS[Math.max(0, Math.min(LIST_IDS.length - 1, cur + (e.key === 'ArrowRight' ? 1 : -1)))];
+    const ids = listIds(), t = S.tasks[id], cur = ids.indexOf(listOf(t));
+    const nxt = ids[Math.max(0, Math.min(ids.length - 1, cur + (e.key === 'ArrowRight' ? 1 : -1)))];
     if (nxt !== listOf(t)) { moveToList(id, nxt); requestAnimationFrame(() => focusTitle($(`.task[data-id="${id}"]`))); }
   } else if (e.key === 'ArrowDown') { e.preventDefault(); focusTitle(list[i + 1]); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); focusTitle(list[i - 1]); }
@@ -713,12 +715,30 @@ function onScroll() {
   });
 }
 
+/* ───────────── inline quick-add (one row at the bottom of every list) ───────────── */
+function quickAdd(key, prefill = '') {
+  const sec = $(`.day[data-key="${key}"]`, board) || $('.day', board);
+  if (!sec) return;
+  const inp = $('.add input', sec);
+  if (prefill) inp.value = prefill;
+  if (S.view === 'focus' || !isMobile()) scrollToKey(sec.dataset.key);
+  inp.focus({ preventScroll: true });
+  inp.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+  if (prefill) inp.setSelectionRange(inp.value.length, inp.value.length);
+}
+board.addEventListener('click', (e) => {
+  const mic = e.target.closest('.qa-mic'); if (!mic) return;
+  e.preventDefault();
+  openCapture({ list: mic.closest('.day').dataset.key, mic: true });
+});
+board.addEventListener('focusin', (e) => { const sec = e.target.closest('.day'); if (sec && sec.dataset.key !== activeKey) setActive(sec.dataset.key); });
+
 /* ───────────── capture sheet ───────────── */
 const cap = { open: false, chip: 'none', custom: '', list: 'personal' };
 const capEl = $('#capture'), cIn = $('#cInput'), cWhen = $('#cWhen'), cHint = $('#cHint'), cLog = $('#cLog'), cPrev = $('#cPreview');
 const chipDate = () => (cap.chip === 'today' ? todayKey() : cap.chip === 'tomorrow' ? addDays(todayKey(), 1) : cap.chip === 'date' ? cap.custom : null);
 function setList(v) {
-  cap.list = LIST_IDS.includes(v) ? v : 'personal';
+  cap.list = listIds().includes(v) ? v : 'personal';
   $$('#capLists .cchip').forEach((c) => c.setAttribute('aria-checked', String(c.dataset.list === cap.list)));
   updateWhen();
 }
@@ -740,7 +760,8 @@ function positionSheet() {
   if (isMobile()) capEl.style.bottom = Math.max(0, innerHeight - vv.height - vv.offsetTop) + 'px';
 }
 window.visualViewport && ['resize', 'scroll'].forEach((ev) => visualViewport.addEventListener(ev, positionSheet));
-function openCapture({ prefill = '', voice = true } = {}) {
+// The capture sheet is now only the voice UI (opened by a list's quick-add mic); typing happens in the inline rows.
+function openCapture({ prefill = '', voice = true, list = null, mic = false } = {}) {
   if (cap.open) { cIn.focus(); return; }
   cap.open = true;
   closeMenu(false); closeSwipe();
@@ -750,11 +771,12 @@ function openCapture({ prefill = '', voice = true } = {}) {
   cIn.value = prefill;
   cPrev.hidden = true; cLog.textContent = ''; setVoice('idle', '');
   setChip('none');
-  setList(LIST_IDS.includes(activeKey) ? activeKey : 'personal');
-  cIn.focus({ preventScroll: true });          // inside the user gesture so iOS raises the keyboard
+  setList(list || (listIds().includes(activeKey) ? activeKey : 'personal'));
+  if (!mic) cIn.focus({ preventScroll: true });          // inside the user gesture so iOS raises the keyboard
   positionSheet();
   buzz(8);
-  if (voice && S.voiceFirst && !prefill) startVoice({ auto: true });
+  if (mic) startVoice();
+  else if (voice && S.voiceFirst && !prefill) startVoice({ auto: true });
 }
 function closeCapture() {
   if (!cap.open) return;
@@ -796,7 +818,6 @@ $('#capForm').addEventListener('submit', (e) => e.preventDefault());
 $('#capLists').addEventListener('click', (e) => { const b = e.target.closest('.cchip[data-list]'); if (b) { setList(b.dataset.list); cIn.focus({ preventScroll: true }); buzz(5); } });
 $('#capChips').addEventListener('click', (e) => { const b = e.target.closest('.cchip[data-v]'); if (b) { setChip(b.dataset.v); cIn.focus({ preventScroll: true }); buzz(5); } });
 $('#cDate').addEventListener('change', (e) => { if (e.target.value) { cap.custom = e.target.value; setChip('date'); cIn.focus({ preventScroll: true }); } });
-$('#fab').addEventListener('click', () => openCapture());
 $('#capBackdrop').addEventListener('click', closeCapture);
 capEl.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCapture(); });
 
@@ -915,7 +936,7 @@ $('#pvAdd').addEventListener('click', () => { pvParts.forEach((p) => addFromText
 $('#pvCancel').addEventListener('click', () => { cPrev.hidden = true; cIn.focus({ preventScroll: true }); });
 $('#micBtn').addEventListener('click', () => startVoice());
 
-/* ───────────── global gestures: swipe up to capture, pull to refresh ───────────── */
+/* ───────────── global gestures: pull to refresh ───────────── */
 {
   let g = null;
   const ptr = $('#ptr');
@@ -923,19 +944,16 @@ $('#micBtn').addEventListener('click', () => startVoice());
     g = null;
     if (e.touches.length !== 1 || cap.open || drag.ghost || drag.swipe || !isMobile()) return;
     const el = e.target;
-    if (el.closest('dialog,.menu,.capture,input,.swipe-actions,.fab')) return;
+    if (el.closest('dialog,.menu,.capture,input,.swipe-actions')) return;
     const t = e.touches[0];
     const list = el.closest('.scroll');
-    const atEnd = !list || list.scrollHeight - list.scrollTop - list.clientHeight < 3;
-    const roomy = !list || list.scrollHeight <= list.clientHeight + 2;
-    g = { x: t.clientX, y: t.clientY, axis: null, up: atEnd && (t.clientY > innerHeight * 0.7 || roomy), down: (!list || list.scrollTop <= 0) && (board.scrollTop <= 0), pull: 0 };
+    g = { x: t.clientX, y: t.clientY, axis: null, down: (!list || list.scrollTop <= 0) && (board.scrollTop <= 0), pull: 0 };
   }, { passive: true });
   document.addEventListener('touchmove', (e) => {
     if (!g || drag.ghost || drag.swipe) return;
     const t = e.touches[0], dx = t.clientX - g.x, dy = t.clientY - g.y;
     if (!g.axis && Math.hypot(dx, dy) > 12) g.axis = Math.abs(dy) > Math.abs(dx) * 1.4 ? 'v' : 'h';
     if (g.axis !== 'v') return;
-    if (dy < -64 && g.up) { g = null; ptr.classList.remove('show'); openCapture(); return; }
     if (dy > 10 && g.down) { g.pull = dy; ptr.textContent = dy > 80 ? 'Release to refresh' : 'Pull to refresh'; ptr.style.transform = `translate(-50%,${Math.min(dy, 110) - 70}px)`; ptr.classList.add('show'); }
   }, { passive: true });
   document.addEventListener('touchend', () => {
@@ -955,8 +973,10 @@ addEventListener('keydown', (e) => {
   if (e.target.closest && e.target.closest('.task') && /^[xXeE !]$|^(Delete|Backspace|Arrow.*)$/.test(k)) return;
   if (k === '?') { $('#helpSheet').showModal(); return; }
   if (k === 'Escape') { closeSwipe(); return; }
-  if (k === 'n' || k === 'N' || k === '/') { e.preventDefault(); openCapture({ voice: false }); return; }
-  if (k.length === 1 && /\S/.test(k)) { e.preventDefault(); openCapture({ prefill: k, voice: false }); updateWhen(); }
+  // Typing anywhere starts a task in the focused list's quick-add row (or the first list).
+  const target = (document.activeElement && document.activeElement.closest && document.activeElement.closest('.day')?.dataset.key) || activeKey || listIds()[0];
+  if (k === 'n' || k === 'N' || k === '/') { e.preventDefault(); quickAdd(target); return; }
+  if (k.length === 1 && /\S/.test(k)) { e.preventDefault(); quickAdd(target, k); }
 });
 
 /* ───────────── insights ───────────── */
@@ -1008,32 +1028,43 @@ $('#insBody').addEventListener('click', (e) => { const b = e.target.closest('[da
 const I_FOCUS = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.9"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
 const I_LIST = '<svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h14" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>';
 function renderView() { $('#viewBtn').innerHTML = S.view === 'focus' ? I_LIST : I_FOCUS; $('#viewBtn').title = S.view === 'focus' ? 'Show all lists' : 'One list at a time'; $('#viewBtn').setAttribute('aria-label', $('#viewBtn').title); document.body.classList.toggle('view-focus', S.view === 'focus'); document.body.classList.toggle('view-overview', S.view !== 'focus'); }
-$('#viewBtn').addEventListener('click', () => { S.view = S.view === 'focus' ? 'overview' : 'focus'; persist(); renderView(); render(); board.scrollTo({ left: 0, top: 0 }); setActive(LIST_IDS[0]); toast(S.view === 'focus' ? 'One list at a time' : 'All lists', { ms: 1200 }); });
-/* ───────────── list names & colors ───────────── */
+$('#viewBtn').addEventListener('click', () => { S.view = S.view === 'focus' ? 'overview' : 'focus'; persist(); renderView(); render(); board.scrollTo({ left: 0, top: 0 }); setActive(listIds()[0]); toast(S.view === 'focus' ? 'One list at a time' : 'All lists', { ms: 1200 }); });
+/* ───────────── lists: rename, recolor, add, delete, reorder ───────────── */
 const PALETTE = ['#e5484d', '#f76b15', '#e2a50b', '#2fb36d', '#12a594', '#0b9fd8', '#2f6bff', '#5b5bd6', '#a855f7', '#e93d82', '#ad7f58', '#7d838d'];
 const leDlg = $('#listEdit');
-let leId = null;
+let leId = null, delArmed = false;
+function queueList(op) {
+  if (op.t === 'list') S.queue = S.queue.filter((q) => !(q.t === 'list' && q.id === op.id));
+  if (op.t === 'order') S.queue = S.queue.filter((q) => q.t !== 'order');
+  S.queue.push(op);
+  persist(); render(); scheduleFlush();
+}
 function renderListSettings() {
-  const box = $('#setLists'); if (!box) return;
-  box.innerHTML = lists().map((l) => `<button type="button" class="set-list" data-edit-list="${l.id}" style="--lc:${l.color}"><i class="ldot" aria-hidden="true"></i><span></span>${I_PEN}</button>`).join('');
-  lists().forEach((l) => { const b = box.querySelector(`[data-edit-list="${l.id}"]`); $('span', b).textContent = l.name; b.setAttribute('aria-label', `Edit ${l.name}`); });
+  const box = $('#setLists'); if (!box || box.classList.contains('sorting')) return;
+  box.innerHTML = lists().map((l) => `<div class="set-list" data-id="${l.id}" style="--lc:${l.color}"><button type="button" class="grip" aria-label="Drag to reorder">${I_GRIP}</button><button type="button" class="set-edit" data-edit-list="${l.id}"><i class="ldot" aria-hidden="true"></i><span></span>${I_PEN}</button></div>`).join('');
+  lists().forEach((l) => { const b = box.querySelector(`[data-edit-list="${l.id}"]`); $('span', b).textContent = l.name; b.setAttribute('aria-label', `Edit ${l.name}`); $('.grip', b.parentElement).setAttribute('aria-label', `Reorder ${l.name} (drag, or use arrow keys)`); });
 }
 function leSetColor(c) {
   c = String(c || '').toLowerCase();
   $$('.swatch', leDlg).forEach((b) => b.setAttribute('aria-checked', String(b.dataset.c === c)));
   if (HEX.test(c)) { $('#leHex').value = c; $('#leColor').value = c; leDlg.style.setProperty('--lc', c); }
 }
-function openListEdit(id) {
-  leId = id;
-  const l = listCfg(id);
-  $('#leTitle').textContent = 'Edit list';
+function openListEdit(id) {   // id = null -> add a new list
+  leId = id; delArmed = false;
+  const l = id ? listCfg(id) : { name: '', color: PALETTE.find((c) => !lists().some((x) => x.color === c)) || PALETTE[1] };
+  $('#leTitle').textContent = id ? 'Edit list' : 'Add list';
+  $('#leSave').textContent = id ? 'Save' : 'Add list';
   $('#leName').value = l.name;
   $('#leErr').textContent = '';
   $('#leSwatches').innerHTML = PALETTE.map((c) => `<button type="button" class="swatch" role="radio" data-c="${c}" style="--sw:${c}" aria-label="${c}"></button>`).join('');
   leSetColor(l.color);
+  const del = $('#leDel');
+  del.hidden = !id || id === 'personal' || lists().length <= 1;
+  del.textContent = 'Delete list';
+  del.classList.remove('armed');
   if (setDlg.open) setDlg.close();
   leDlg.showModal();
-  if (!isMobile()) setTimeout(() => $('#leName').select(), 30);
+  if (!isMobile() || !id) setTimeout(() => (id ? $('#leName').select() : $('#leName').focus()), 30);
 }
 $('#leSwatches').addEventListener('click', (e) => { const b = e.target.closest('.swatch'); if (b) { leSetColor(b.dataset.c); buzz(8); } });
 $('#leColor').addEventListener('input', (e) => leSetColor(e.target.value));
@@ -1047,17 +1078,129 @@ $('#leForm').addEventListener('submit', (e) => {
   if (!HEX.test(color)) return err('Pick a color, or type a hex like #2f6bff.');
   const clash = lists().find((l) => l.id !== leId && (l.name.toLowerCase() === name.toLowerCase() || l.id === name.toLowerCase()));
   if (clash) return err(`Another list is already called “${clash.name}”.`);
+  if (!leId) {   // add
+    if (lists().length >= 20) return err('That’s the maximum of 20 lists.');
+    const taken = new Set(listIds().concat(DEFAULT_LISTS.map((l) => l.id)));
+    let id = slugify(name), n = 2; const base = id; while (taken.has(id)) id = `${base}-${n++}`;
+    S.lists = lists().concat({ id, name, color, order: lists().length });
+    queueList({ t: 'newlist', id, name, color });
+    leDlg.close();
+    toast(`Added “${name}”`, { ms: 1400 });
+    requestAnimationFrame(() => quickAdd(id));
+    return;
+  }
   const prev = listCfg(leId);
   if (prev.name === name && prev.color === color) { leDlg.close(); return; }
   S.lists = lists().map((l) => (l.id === leId ? { ...l, name, color } : l));
-  S.queue = S.queue.filter((q) => !(q.t === 'list' && q.id === leId));
-  S.queue.push({ t: 'list', id: leId, name, color });
-  persist(); render(); scheduleFlush();
+  queueList({ t: 'list', id: leId, name, color });
   leDlg.close();
   toast(`Saved “${name}”`, { ms: 1400 });
 });
-board.addEventListener('click', (e) => { const b = e.target.closest('.list-name'); if (b) { e.stopPropagation(); openListEdit(b.closest('.day').dataset.key); } }, true);
+$('#leDel').addEventListener('click', () => {
+  const id = leId; if (!id || id === 'personal' || lists().length <= 1) return;
+  const n = Object.values(S.tasks).filter((t) => listOf(t) === id).length;
+  if (!delArmed) {   // first tap arms; second confirms
+    delArmed = true;
+    $('#leDel').classList.add('armed');
+    $('#leDel').textContent = n ? `Delete? ${n} task${n === 1 ? ' moves' : 's move'} to ${listName('personal')}` : 'Tap again to delete';
+    return;
+  }
+  const name = listName(id);
+  for (const t of Object.values(S.tasks)) if (t.list === id) t.list = 'personal';   // server does the same; tasks are never deleted
+  S.lists = lists().filter((l) => l.id !== id);
+  S.queue = S.queue.map((q) => (q.t === 'put' && q.task.list === id ? { ...q, task: { ...q.task, list: 'personal' } } : q)).filter((q) => !(q.t === 'list' && q.id === id));
+  archOpen.delete(id);
+  queueList({ t: 'dellist', id });
+  leDlg.close();
+  toast(n ? `Deleted “${name}”. ${n} task${n === 1 ? '' : 's'} moved to ${listName('personal')}.` : `Deleted “${name}”`, { ms: 3000 });
+});
+function saveOrder(ids) {
+  const cur = listIds();
+  if (ids.join('|') === cur.join('|')) return;
+  const rank = new Map(ids.map((id, i) => [id, i]));
+  S.lists = lists().map((l) => ({ ...l, order: rank.has(l.id) ? rank.get(l.id) : 1000 + l.order }));
+  queueList({ t: 'order', order: lists().map((l) => l.id) });
+}
+let headerDragged = false;
+board.addEventListener('click', (e) => {
+  const b = e.target.closest('.list-name');
+  if (!b) return;
+  e.stopPropagation();
+  if (headerDragged) { headerDragged = false; return; }
+  openListEdit(b.closest('.day').dataset.key);
+}, true);
 $('#setLists').addEventListener('click', (e) => { const b = e.target.closest('[data-edit-list]'); if (b) openListEdit(b.dataset.editList); });
+$('#addListBtn').addEventListener('click', () => openListEdit(null));
+// Settings → Lists: drag the grip (touch or mouse) to reorder; arrow keys on the grip move a list up/down.
+{
+  const box = $('#setLists');
+  let sd = null;
+  box.addEventListener('pointerdown', (e) => {
+    const g = e.target.closest('.grip'); if (!g) return;
+    e.preventDefault();
+    const row = g.closest('.set-list');
+    sd = { row, pid: e.pointerId, y: e.clientY };
+    g.setPointerCapture(e.pointerId);
+    box.classList.add('sorting'); row.classList.add('lifting'); buzz(8);
+  });
+  box.addEventListener('pointermove', (e) => {
+    if (!sd || e.pointerId !== sd.pid) return;
+    const rows = $$('.set-list', box).filter((r) => r !== sd.row);
+    let before = null;
+    for (const r of rows) { const rc = r.getBoundingClientRect(); if (e.clientY < rc.top + rc.height / 2) { before = r; break; } }
+    if (before !== sd.row.nextElementSibling) { box.insertBefore(sd.row, before); buzz(4); }
+  });
+  const end = () => {
+    if (!sd) return;
+    sd.row.classList.remove('lifting'); box.classList.remove('sorting');
+    sd = null;
+    saveOrder($$('.set-list', box).map((r) => r.dataset.id));
+    renderListSettings();
+  };
+  box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
+  box.addEventListener('keydown', (e) => {
+    const g = e.target.closest('.grip'); if (!g || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    e.preventDefault();
+    const ids = listIds(), id = g.closest('.set-list').dataset.id, i = ids.indexOf(id), j = i + (e.key === 'ArrowUp' ? -1 : 1);
+    if (j < 0 || j >= ids.length) return;
+    ids.splice(i, 1); ids.splice(j, 0, id); saveOrder(ids);
+    renderListSettings(); $(`.set-list[data-id="${id}"] .grip`, box).focus();
+  });
+}
+// Desktop: drag a list's header sideways to reorder the columns.
+{
+  let hd = null;
+  board.addEventListener('pointerdown', (e) => {
+    const h = e.target.closest('.day > header');
+    if (!h || isMobile() || e.pointerType !== 'mouse' || e.button !== 0) return;
+    hd = { sec: h.parentElement, x: e.clientX, pid: e.pointerId, on: false };
+  });
+  addEventListener('pointermove', (e) => {
+    if (!hd || e.pointerId !== hd.pid) return;
+    const dx = e.clientX - hd.x;
+    if (!hd.on && Math.abs(dx) < 8) return;
+    if (!hd.on) { hd.on = true; hd.sec.classList.add('list-dragging'); document.body.classList.add('sorting-lists'); }
+    hd.sec.style.transform = `translateX(${dx}px)`;
+    const secs = $$('.day', board).filter((s) => s !== hd.sec);
+    hd.before = null;
+    for (const s of secs) { const r = s.getBoundingClientRect(); if (e.clientX < r.left + r.width / 2) { hd.before = s; break; } }
+    secs.forEach((s) => s.classList.toggle('drop-before', s === hd.before));
+    const last = secs[secs.length - 1]; if (last) last.classList.toggle('drop-after', !hd.before);
+  });
+  const end = () => {
+    if (!hd) return;
+    const { sec, on, before } = hd; hd = null;
+    if (!on) return;
+    headerDragged = true; setTimeout(() => (headerDragged = false), 50);
+    sec.classList.remove('list-dragging'); sec.style.transform = ''; document.body.classList.remove('sorting-lists');
+    $$('.day', board).forEach((s) => s.classList.remove('drop-before', 'drop-after'));
+    const ids = $$('.day', board).map((s) => s.dataset.key).filter((k) => k !== sec.dataset.key);
+    const at = before ? ids.indexOf(before.dataset.key) : ids.length;
+    ids.splice(at, 0, sec.dataset.key);
+    saveOrder(ids);
+  };
+  addEventListener('pointerup', end); addEventListener('pointercancel', end);
+}
 
 const setDlg = $('#settings');
 function openSettings() { renderListSettings(); $('#setSound').checked = !S.muted; $('#setHaptics').checked = S.haptics; $('#setVoice').checked = S.voiceFirst; setDlg.showModal(); }
@@ -1112,11 +1255,12 @@ async function sync() {
   try {
     while (S.queue.length) {
       const q = S.queue[0];
-      const r = q.t === 'put'
-        ? await api('/api/tasks', { method: 'POST', body: JSON.stringify(q.task) })
-        : q.t === 'list'
-          ? await api('/api/lists?id=' + encodeURIComponent(q.id), { method: 'PATCH', body: JSON.stringify({ name: q.name, color: q.color }) })
-          : await api('/api/tasks?id=' + encodeURIComponent(q.id), { method: 'DELETE' });
+      const r = q.t === 'put' ? await api('/api/tasks', { method: 'POST', body: JSON.stringify(q.task) })
+        : q.t === 'list' ? await api('/api/lists?id=' + encodeURIComponent(q.id), { method: 'PATCH', body: JSON.stringify({ name: q.name, color: q.color }) })
+        : q.t === 'newlist' ? await api('/api/lists', { method: 'POST', body: JSON.stringify({ id: q.id, name: q.name, color: q.color }) })
+        : q.t === 'dellist' ? await api('/api/lists?id=' + encodeURIComponent(q.id), { method: 'DELETE' })
+        : q.t === 'order' ? await api('/api/lists', { method: 'PUT', body: JSON.stringify({ order: q.order }) })
+        : await api('/api/tasks?id=' + encodeURIComponent(q.id), { method: 'DELETE' });
       if (r.status === 401) { showGate(); return; }
       if (r.status === 503) return setMode('local');
       if (r.status === 409 || r.status === 429 || r.status >= 500) { setTimeout(sync, 2500); throw new Error('retry'); }
@@ -1128,8 +1272,9 @@ async function sync() {
     if (r.status === 503) return setMode('local');
     if (!r.ok) throw new Error('server');
     const { tasks, lists: serverLists } = await r.json();
-    if (Array.isArray(serverLists) && !S.queue.some((q) => q.t === 'list')) S.lists = serverLists.map(({ id, name, color }) => ({ id, name, color }));
-    const pending = new Set(S.queue.filter((q) => q.t !== 'list').map((q) => (q.t === 'put' ? q.task.id : q.id)));
+    const LIST_OPS = ['list', 'newlist', 'dellist', 'order'];
+    if (Array.isArray(serverLists) && serverLists.length && !S.queue.some((q) => LIST_OPS.includes(q.t))) S.lists = serverLists.map(({ id, name, color, order }) => ({ id, name, color, order }));
+    const pending = new Set(S.queue.filter((q) => !LIST_OPS.includes(q.t)).map((q) => (q.t === 'put' ? q.task.id : q.id)));
     const seen = new Set();
     for (const t of tasks) {
       seen.add(t.id);
@@ -1172,9 +1317,9 @@ render();
   if (p2.has('capture') || p2.has('new')) {
     p2.delete('capture'); p2.delete('new');
     history.replaceState(null, '', location.pathname + (p2.toString() ? '?' + p2 : ''));
-    setTimeout(() => openCapture(), 80);
+    setTimeout(() => quickAdd('personal'), 80);   // home-screen "Add task" shortcut
   }
 })();
 setInterval(() => { if (renderedDay !== nyToday()) { renderedDay = nyToday(); render(); } }, 60000);
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
-window.__done = { S, render, openCapture };
+window.__done = { S, render, openCapture, quickAdd };

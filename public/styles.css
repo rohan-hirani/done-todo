@@ -194,11 +194,7 @@ kbd{font:600 12.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(-
 .task.high.done .prio{opacity:.45}
 .title{min-height:24px}
 
-.fab{position:fixed;right:max(18px,env(safe-area-inset-right));bottom:calc(env(safe-area-inset-bottom) + 20px);width:62px;height:62px;border-radius:50%;background:var(--blue);color:#fff;display:grid;place-items:center;box-shadow:0 10px 28px -6px rgba(47,107,255,.6),0 2px 6px rgba(0,0,0,.18);z-index:40;transition:transform .25s var(--ease),opacity .2s}
-.fab svg{width:28px;height:28px;transition:transform .3s var(--ease)}
-.fab:hover{transform:scale(1.06)}.fab:active{transform:scale(.92)}.fab:active svg{transform:rotate(90deg)}
-body.capturing .fab{transform:scale(0);opacity:0;pointer-events:none}
-.board{padding-bottom:calc(env(safe-area-inset-bottom) + 96px)}
+.board{padding-bottom:calc(env(safe-area-inset-bottom) + 24px)}
 
 .cap-backdrop{position:fixed;inset:0;background:rgba(10,12,16,.4);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .25s;z-index:75}
 body.capturing .cap-backdrop{opacity:1;pointer-events:auto}
@@ -267,12 +263,10 @@ body.capturing .cap-backdrop{opacity:1;pointer-events:auto}
 @media (min-width:761px){
   .capture{left:50%;right:auto;width:560px;margin:0;bottom:48px;border-radius:26px;transform:translate(-50%,130%);padding-bottom:18px}
   .capture.open{transform:translate(-50%,0)}
-  .fab{width:56px;height:56px}
-  .board{padding-bottom:96px}
+  .board{padding-bottom:28px}
 }
 @media (max-width:760px){
   .only-mobile{display:inline-grid}
-  .add{display:none}
   .view-focus .top .ring-wrap,.view-focus .top .ring-cap{display:none}
   .view-focus .day{flex:0 0 calc(100vw - 32px)}
   .view-focus .day.today .hero{display:flex}
@@ -398,10 +392,6 @@ html.needs-auth #gate{display:flex}
 .menu [data-act^="list:"]::before{content:"";display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--lc,var(--muted));margin-right:9px;vertical-align:1px}
 .set-sec{padding:6px 0 8px;font-weight:650}.set-sec small{display:block;color:var(--muted);font-weight:500;font-size:13px}
 .set-lists{display:grid;gap:2px;padding-bottom:10px;border-bottom:1px solid var(--line)}
-.set-list{display:flex;align-items:center;gap:11px;padding:10px 8px;margin:0 -8px;border-radius:12px;font-weight:650;text-align:left;color:var(--ink)}
-.set-list span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.set-list .pen{width:17px;height:17px;color:var(--muted)}
-.set-list:hover{background:var(--hover)}
 .list-edit .le-lbl{display:block;font-size:13px;font-weight:700;color:var(--muted);margin:14px 0 7px}
 .list-edit .le-name{display:flex;align-items:center;gap:10px;border:1.5px solid var(--line);border-radius:12px;background:var(--bg);padding:0 0 0 14px}
 .list-edit .le-name:focus-within{border-color:var(--lc,var(--blue))}
@@ -419,3 +409,39 @@ html.needs-auth #gate{display:flex}
 .le-custom #leHex{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:16px;padding:11px 12px}
 .list-edit .primary{background:var(--lc,var(--blue))}
 @media (min-width:761px){.day.list-col h2{font-size:21px}}
+
+/* ── v9: inline quick-add row at the bottom of each list ── */
+.add.qa{flex:none;margin:4px 6px 6px;padding:0 2px 0 10px;border:0;border-radius:12px;background:transparent;transition:background .15s,box-shadow .15s}
+.add.qa:hover{background:var(--hover)}
+.add.qa:focus-within{background:var(--hover);box-shadow:inset 0 0 0 1.5px var(--lc,var(--blue))}
+.add.qa:focus-within .plus{color:var(--lc,var(--blue))}
+.add.qa input{padding:12px 0}
+.qa-mic{flex:none;width:36px;height:36px;border-radius:50%;display:grid;place-items:center;color:var(--muted);opacity:.75;transition:opacity .15s,background .15s,color .15s}
+.qa-mic svg{width:18px;height:18px}
+.qa-mic:hover,.add.qa:focus-within .qa-mic{opacity:1;color:var(--red)}
+.qa-mic:hover{background:color-mix(in srgb,var(--red) 12%,transparent)}
+.due.overdue{color:var(--red)}
+/* ── v9: list reordering + add/delete ── */
+.day>header{cursor:default}
+@media (min-width:761px) and (hover:hover){.day>header{cursor:grab}}
+.day.list-dragging{z-index:5;cursor:grabbing;box-shadow:0 24px 50px -18px rgba(0,0,0,.35),inset 0 3px 0 var(--lc,transparent)!important;opacity:.96;transition:none}
+body.sorting-lists,body.sorting-lists *{cursor:grabbing!important;user-select:none}
+.day.drop-before{box-shadow:var(--shadow),-6px 0 0 -2px var(--lc,var(--blue))}
+.day.drop-after{box-shadow:var(--shadow),6px 0 0 -2px var(--lc,var(--blue))}
+.set-list{display:flex;align-items:center;gap:2px;padding:0;margin:0 -8px;border-radius:12px;background:var(--surface)}
+.set-list .grip{flex:none;width:36px;height:44px;display:grid;place-items:center;color:var(--muted);cursor:grab;touch-action:none;border-radius:10px}
+.set-list .grip svg{width:18px;height:18px}
+.set-edit{flex:1;min-width:0;display:flex;align-items:center;gap:11px;padding:10px 8px 10px 4px;border-radius:12px;font-weight:650;text-align:left;color:var(--ink)}
+.set-edit span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-edit .pen{width:17px;height:17px;color:var(--muted)}
+.set-edit:hover{background:var(--hover)}
+.set-list.lifting{box-shadow:0 10px 26px -10px rgba(0,0,0,.35);background:var(--hover);position:relative;z-index:1}
+.add-list{margin:8px 0 4px -8px;color:var(--ink)}
+.list-edit .row{align-items:center}
+.list-edit .spacer{flex:1}
+.le-del{color:var(--red)!important;padding-left:4px!important}
+.le-del.armed{background:color-mix(in srgb,var(--red) 12%,transparent)!important}
+/* keep columns readable when there are many lists: scroll sideways instead of crushing them */
+@media (min-width:761px){.day.list-col{min-width:250px;container-type:inline-size}}
+.list-name .lname{overflow-wrap:break-word;word-break:normal;hyphens:manual}
+@container (max-width:300px){.day.list-col h2{font-size:19px}.day.list-col .sub{font-size:12.5px}}
