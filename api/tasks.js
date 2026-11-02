@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { parseList, listSettings, authed, configured, load, mutate, cors, json, readBody, parseDate, dateOrNull, normalize, UUID } = require('./_lib');
+const { parsePriority, parseList, listSettings, authed, configured, load, mutate, cors, json, readBody, parseDate, dateOrNull, normalize, UUID } = require('./_lib');
 
 const validIso = (v) => { const d = new Date(v); return v && !isNaN(d) ? d.toISOString() : null; };
 
@@ -21,7 +21,9 @@ function fields(b, { partial }) {
     if (!isFinite(p)) throw new Error('position must be a number');
     out.position = p;
   }
-  if (b.pinned !== undefined) out.pinned = !!b.pinned;
+  // priority: "high"/"normal" or boolean; `high: true|false` and the legacy `pinned` flag are accepted as aliases.
+  const pr = b.priority !== undefined ? b.priority : b.high !== undefined ? b.high : b.pinned !== undefined ? !!b.pinned : undefined;
+  if (pr !== undefined) { out.priority = parsePriority(pr); out.pinned = out.priority === 'high'; }
   if (b.list !== undefined && b.list !== null && b.list !== '') out.list = String(b.list);   // resolved against current list names inside mutate()
   if (b.planned_date !== undefined) out.planned_date = dateOrNull(b.planned_date);
   if (b.original_date !== undefined) out.original_date = dateOrNull(b.original_date);
@@ -32,9 +34,10 @@ function fields(b, { partial }) {
 
 /**
  * GET    /api/tasks              {tasks, lists}  (lists = [{id, name, color}] display settings)
- * POST   /api/tasks              {title, list?, date?, ...}  create (or upsert when "id" is given; newest updated_at wins)
+ * POST   /api/tasks              {title, list?, date?, priority?, ...}  create (or upsert when "id" is given; newest updated_at wins)
  *                                 list: id (personal|website|ir|social) or the list's current display name; default personal
- * PATCH  /api/tasks?id=<uuid>    partial update (title, list, date, done, position)
+ * PATCH  /api/tasks?id=<uuid>    partial update (title, list, date, done, position, priority)
+ *                                 priority: "high" | "normal" (or true/false; `high` boolean also accepted)
  * DELETE /api/tasks?id=<uuid>    delete
  * Requires the password cookie or an x-passcode header (see README).
  */
@@ -70,7 +73,8 @@ module.exports = async (req, res) => {
         delete data.deleted[tid];
         const t = {
           id: tid, title: f.title, list: f.list || (old && old.list) || 'personal', date: f.date, done: f.done ?? false, done_at: f.done_at ?? null,
-          pinned: f.pinned ?? !!(old && old.pinned),
+          priority: f.priority || (old && old.priority) || 'normal',
+          pinned: (f.priority || (old && old.priority)) === 'high',
           planned_date: f.planned_date !== undefined ? f.planned_date : old ? (f.date !== old.date ? f.date : old.planned_date ?? f.date) : f.date,
           original_date: f.original_date !== undefined ? f.original_date : old && f.date === old.date ? old.original_date ?? null : null,
           rollovers: f.rollovers ?? (old ? old.rollovers || 0 : 0), position: f.position ?? Date.now(), created_at: (upsert && validIso(b.created_at)) || (old && old.created_at) || now,

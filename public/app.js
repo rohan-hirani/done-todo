@@ -11,9 +11,21 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const isMobile = () => matchMedia('(max-width:760px)').matches;
 
 /* ───────────── state ───────────── */
+// High priority replaced the old "Top 3" star: pinned tasks become priority "high"; `pinned` is kept as a mirror.
+function migratePriority(tasks) {
+  for (const t of Object.values(tasks)) if (t.priority !== 'high' && t.priority !== 'normal') t.priority = t.pinned ? 'high' : 'normal';
+  return tasks;
+}
+const isHigh = (t) => t.priority === 'high';
+// A leading or trailing "!" (one or more, e.g. "!! Call bank" or "Call bank!") marks a task high priority and is stripped.
+function bang(text) {
+  const s = String(text || '');
+  const m = s.match(/^\s*!+\s*([\s\S]*?)\s*$/) || s.match(/^\s*([\s\S]*?)\s*!+\s*$/);
+  return m && m[1].trim() ? { title: m[1].trim(), high: true } : { title: s, high: false };
+}
 const saved = (() => { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } })();
 const S = {
-  tasks: saved.tasks || {},
+  tasks: migratePriority(saved.tasks || {}),
   queue: saved.queue || [],
   muted: !!saved.muted,
   haptics: saved.haptics !== false,
@@ -76,10 +88,10 @@ function put(task) {
   S.queue.push({ t: 'put', task: { ...task } });
   persist(); render(); scheduleFlush();
 }
-function addTask(title, date, list = 'personal') {
+function addTask(title, date, list = 'personal', high = false) {
   title = title.trim();
   if (!title) return null;
-  const t = { id: uid(), title, list: LIST_IDS.includes(list) ? list : 'personal', date, planned_date: date, original_date: null, rollovers: 0, done: false, done_at: null, pinned: false, position: Date.now(), created_at: nowIso(), updated_at: nowIso(), source: 'app' };
+  const t = { id: uid(), title, list: LIST_IDS.includes(list) ? list : 'personal', date, planned_date: date, original_date: null, rollovers: 0, done: false, done_at: null, priority: high ? 'high' : 'normal', pinned: !!high, position: Date.now(), created_at: nowIso(), updated_at: nowIso(), source: 'app' };
   put(t);
   return t;
 }
@@ -121,11 +133,11 @@ const nyDayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York'
 const nyToday = () => nyDayFmt.format(new Date());
 const doneDayNY = (t) => (t.done_at ? nyDayFmt.format(new Date(t.done_at)) : '');
 const doneToday = (t) => t.done && doneDayNY(t) >= nyToday();
-// Active tasks of a topic list: open tasks first (starred, then manual order), then today's completed tasks,
+// Active tasks of a topic list: open tasks first (high priority, then manual order), then today's completed tasks,
 // crossed out at the bottom. Completed tasks stay until the NY day they were done is over, then move to the archive.
 function activeList(key) {
   const all = Object.values(S.tasks).filter((t) => listOf(t) === key && (!t.done || doneToday(t)));
-  const open = all.filter((t) => !t.done).sort((a, b) => ((b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) || a.position - b.position);
+  const open = all.filter((t) => !t.done).sort((a, b) => ((isHigh(b) ? 1 : 0) - (isHigh(a) ? 1 : 0)) || a.position - b.position);
   const done = all.filter((t) => t.done).sort((a, b) => (a.done_at || '').localeCompare(b.done_at || ''));
   return open.concat(done);
 }
@@ -145,7 +157,7 @@ let activeKey = 'personal';
 const ICON_MORE = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg>';
 const ICON_CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle class="box" cx="12" cy="12" r="10"/><circle class="fill" cx="12" cy="12" r="10.8"/><path class="tick" d="M7 12.5l3.4 3.4L17 8.8"/></svg>';
 const I_PEN = '<svg class="pen" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-const I_STAR = '<svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.5 6 .8-4.4 4.2 1.1 6-5.3-2.9-5.3 2.9 1.1-6L3.4 9.8l6-.8z" fill="currentColor"/></svg>';
+const I_BANG = '<svg viewBox="0 0 24 24"><path d="M12 4.5v10" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="19.2" r="1.8" fill="currentColor"/></svg>';
 const I_MOVE = '<svg viewBox="0 0 24 24"><path d="M4 12h14m-5-5l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const I_TRASH = '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2m-6 0l1 12h6l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const I_OK = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -205,16 +217,16 @@ function applyLists() {
   renderListSettings();
 }
 
-const taskSig = (t, key) => [t.title, t.done, t.date, t.pinned, todayKey()].join('\u0001');
+const taskSig = (t, key) => [t.title, t.done, t.date, t.priority, todayKey()].join('\u0001');
 function makeLi(t) {
   const li = document.createElement('li');
   li.className = 'task';
   li.dataset.id = t.id;
   li.innerHTML = `<div class="swipe-done">${I_OK}<span>Done</span></div>
-    <div class="swipe-actions"><button class="act-star" aria-label="Star as top 3">${I_STAR}<span>Top 3</span></button><button class="act-move" aria-label="Move">${I_MOVE}<span>Move</span></button><button class="act-del" aria-label="Delete">${I_TRASH}<span>Delete</span></button></div>
+    <div class="swipe-actions"><button class="act-star" aria-label="Toggle high priority">${I_BANG}<span>Priority</span></button><button class="act-move" aria-label="Move">${I_MOVE}<span>Move</span></button><button class="act-del" aria-label="Delete">${I_TRASH}<span>Delete</span></button></div>
     <div class="task-in">
       <button class="check" role="checkbox" aria-checked="false" aria-label="Complete task">${ICON_CHECK}</button>
-      <div class="body"><span><span class="star" aria-label="Top 3">★</span><span class="title" tabindex="0" role="button" aria-label="Edit task"></span></span><span class="due" hidden></span></div>
+      <div class="body"><span><span class="prio" role="img" aria-label="High priority" title="High priority">!</span><span class="title" tabindex="0" role="button" aria-label="Edit task"></span></span><span class="due" hidden></span></div>
       <button class="more" aria-haspopup="menu" aria-label="Move or delete task">${ICON_MORE}</button>
     </div>`;
   return li;
@@ -222,12 +234,12 @@ function makeLi(t) {
 function updateLi(li, t, key) {
   const sig = taskSig(t, key);
   li.classList.toggle('done', t.done);
-  li.classList.toggle('pinned', !!t.pinned && !t.done);
+  li.classList.toggle('high', isHigh(t));
   $('.check', li).setAttribute('aria-checked', String(t.done));
   if (li.dataset.sig === sig) return;
   li.dataset.sig = sig;
   if (!li.classList.contains('editing')) $('.title', li).textContent = t.title;
-  $('.act-star span', li).textContent = t.pinned ? 'Unstar' : 'Top 3';
+  $('.act-star span', li).textContent = isHigh(t) ? 'Normal' : 'Priority';
   const due = $('.due', li), lbl = t.done ? '' : dueLabel(t.date);
   due.hidden = !lbl; due.textContent = lbl ? `Due ${lbl === 'Overdue' ? 'earlier' : lbl}` : '';
   due.classList.toggle('soon', !!t.date && t.date <= todayKey());
@@ -372,14 +384,12 @@ function allDone() {
   const msgs = ['Clear day. Nicely done.', 'All done for today. Go enjoy it.', 'Zero left. Beautiful.', 'That’s everything. Well played.'];
   toast(msgs[Math.floor(Math.random() * msgs.length)], { big: true, ms: 4200 });
 }
-function togglePin(id) {
+function togglePin(id) {   // high-priority toggle (no cap)
   const t = S.tasks[id]; if (!t) return;
-  if (!t.pinned) {
-    const key = listOf(t);
-    if (activeList(key).filter((x) => x.pinned && !x.done).length >= 3) return toast('Top 3 is full. Unstar one first.', { ms: 2200 });
-  }
-  put({ ...t, pinned: !t.pinned });
+  const high = !isHigh(t);
+  put({ ...t, priority: high ? 'high' : 'normal', pinned: high });
   buzz(8);
+  toast(high ? 'High priority' : 'Normal priority', { ms: 1100 });
 }
 
 /* ───────────── toast ───────────── */
@@ -435,7 +445,7 @@ function openMenu(id, anchor) {
   }
   const t = S.tasks[id];
   $('#menuDate').value = t && t.date || '';
-  $('#menuPin').textContent = t && t.pinned ? 'Remove star' : 'Star as top 3';
+  $('#menuPin').textContent = t && isHigh(t) ? 'Remove high priority' : 'Mark high priority';
   $('button', menu).focus();
 }
 function closeMenu(refocus = true) {
@@ -508,8 +518,8 @@ board.addEventListener('submit', (e) => {
   e.preventDefault();
   const form = e.target.closest('.add'); if (!form) return;
   const inp = $('input', form), list = form.closest('.day').dataset.key;
-  const p = parseWhen(inp.value, new Date());
-  if (addTask(p.date !== undefined ? p.title : inp.value, p.date !== undefined ? p.date : null, list)) { inp.value = ''; }
+  const b0 = bang(inp.value), p = parseWhen(b0.title, new Date()), b1 = bang(p.date !== undefined ? p.title : b0.title);
+  if (addTask(b1.title, p.date !== undefined ? p.date : null, list, b0.high || b1.high)) { inp.value = ''; }
   inp.focus();
 });
 board.addEventListener('keydown', (e) => {
@@ -536,6 +546,7 @@ board.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowUp') { e.preventDefault(); focusTitle(list[i - 1]); }
   else if (e.target.matches('.title') && (e.key === 'Enter' || e.key === 'e')) { e.preventDefault(); startEdit(li); }
   else if (e.key === ' ' || e.key === 'x') { e.preventDefault(); toggle(id, $('.check', li)); }
+  else if (e.key === '!') { e.preventDefault(); togglePin(id); requestAnimationFrame(() => focusTitle($(`.task[data-id="${id}"]`))); }
   else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteWithUndo(id); }
 });
 
@@ -720,8 +731,8 @@ function setChip(v) {
   updateWhen();
 }
 function updateWhen() {
-  const p = parseWhen(cIn.value, new Date());
-  cWhen.textContent = cIn.value.trim() ? `→ ${listName(cap.list)}${(p.date !== undefined ? p.date : chipDate()) ? ' · due ' + whenLabel(p.date !== undefined ? p.date : chipDate()) : ''}` : '';
+  const b0 = bang(cIn.value), p = parseWhen(b0.title, new Date()), high = b0.high || bang(p.title).high;
+  cWhen.textContent = cIn.value.trim() ? `→ ${high ? '! High priority · ' : ''}${listName(cap.list)}${(p.date !== undefined ? p.date : chipDate()) ? ' · due ' + whenLabel(p.date !== undefined ? p.date : chipDate()) : ''}` : '';
 }
 function positionSheet() {
   const vv = window.visualViewport;
@@ -765,11 +776,11 @@ function logAdded(title, date) {
   capEl.classList.remove('pulse'); void capEl.offsetWidth; capEl.classList.add('pulse');
 }
 function addFromText(text, { keepFocus = true } = {}) {
-  const p = parseWhen(text, new Date());
-  const title = p.title.trim();
+  const b0 = bang(text), p = parseWhen(b0.title, new Date()), b1 = bang(p.title);
+  const title = b1.title.trim(), high = b0.high || b1.high;
   if (!title) return false;
   const date = p.date !== undefined ? p.date : chipDate();
-  addTask(title, date, cap.list);
+  addTask(title, date, cap.list, high);
   logAdded(title, date);
   buzz(12);
   sfx.pop(S.muted);
@@ -891,7 +902,7 @@ function handleVoiceText(text) {
   if (parts.length > 1) {
     pvParts = parts;
     const ul = $('ul', cPrev); ul.textContent = '';
-    parts.forEach((p) => { const li = document.createElement('li'); const w = parseWhen(p, new Date()); li.textContent = w.title; const s = document.createElement('small'); s.textContent = capLabel(w.date !== undefined ? w.date : chipDate()); li.append(s); ul.append(li); });
+    parts.forEach((p) => { const li = document.createElement('li'); const w = parseWhen(bang(p).title, new Date()); li.textContent = (bang(p).high || bang(w.title).high ? '! ' : '') + bang(w.title).title; const s = document.createElement('small'); s.textContent = capLabel(w.date !== undefined ? w.date : chipDate()); li.append(s); ul.append(li); });
     $('#pvAdd').textContent = `Add ${parts.length} tasks`;
     cPrev.hidden = false;
   } else if (addFromText(text, { keepFocus: false })) {
@@ -941,7 +952,7 @@ addEventListener('keydown', (e) => {
   if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) { if (e.key === 'Escape') e.target.blur(); return; }
   if (document.querySelector('dialog[open]') || !menu.hidden || cap.open) return;
   const k = e.key;
-  if (e.target.closest && e.target.closest('.task') && /^[xXeE ]$|^(Delete|Backspace|Arrow.*)$/.test(k)) return;
+  if (e.target.closest && e.target.closest('.task') && /^[xXeE !]$|^(Delete|Backspace|Arrow.*)$/.test(k)) return;
   if (k === '?') { $('#helpSheet').showModal(); return; }
   if (k === 'Escape') { closeSwipe(); return; }
   if (k === 'n' || k === 'N' || k === '/') { e.preventDefault(); openCapture({ voice: false }); return; }
@@ -1123,7 +1134,7 @@ async function sync() {
     for (const t of tasks) {
       seen.add(t.id);
       if (pending.has(t.id)) continue;
-      S.tasks[t.id] = { ...t, date: t.date || null };
+      S.tasks[t.id] = migratePriority({ x: { ...t, date: t.date || null } }).x;
     }
     for (const id of Object.keys(S.tasks)) if (!seen.has(id) && !pending.has(id)) delete S.tasks[id];
     persist(); setMode('sync'); render();
