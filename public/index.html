@@ -39,7 +39,7 @@
 <link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
-<link rel="stylesheet" href="/styles.css?v=10">
+<link rel="stylesheet" href="/styles.css?v=11">
 </head>
 <body>
 <div id="gate" class="gate" hidden>
@@ -83,6 +83,9 @@
       <svg viewBox="0 0 24 24"><path d="M5 20V11m7 9V5m7 15v-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
     </button>
     <button class="icon-btn" id="syncBtn" aria-label="Sync status" title="Sync"><span class="dot" id="syncDot"></span></button>
+    <button class="icon-btn only-desktop" id="listsBtn" aria-label="Edit lists" title="Edit lists: reorder, rename, recolor, add or delete">
+      <svg viewBox="0 0 24 24"><path d="M4 6h10M4 12h7M4 18h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M13 19.5h2.6L21 14.1l-2.6-2.6-5.4 5.4v2.6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+    </button>
     <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
     </button>
@@ -90,7 +93,7 @@
 </header>
 
 <div class="ptr" id="ptr" aria-hidden="true">Release to sync</div>
-<nav class="strip" id="strip" aria-label="Lists"></nav>
+<div class="strip-bar"><nav class="strip" id="strip" aria-label="Lists"></nav><button type="button" class="strip-edit" id="stripEdit" aria-label="Edit lists: reorder, rename, recolor, add or delete" title="Edit lists"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Edit</span></button></div>
 <main class="board" id="board" tabindex="-1"></main>
 
 
@@ -150,9 +153,11 @@
 
 <dialog id="settings" class="sheet">
   <h2>Settings</h2>
-  <div class="set-sec"><span>Lists<small>Tap a list to rename or recolor it, drag ⠿ to reorder. Synced to all your devices.</small></span></div>
-  <div class="set-lists" id="setLists"></div>
-  <button type="button" class="ghost add-list" id="addListBtn">+ Add list</button>
+  <section class="le-sec" id="listsSec" aria-labelledby="listsSecTitle">
+    <h3 id="listsSecTitle">Edit lists</h3>
+    <p class="le-help">Drag <b>≡</b> or use the arrows to change the order of your lists. Tap a color dot to recolor, a name to rename. Changes save right away, on every device.</p>
+    <div class="le-rows" id="setLists" role="list"></div>
+  </section>
   <label class="toggle"><span>Sound<small>A soft pop when you finish something</small></span><input type="checkbox" id="setSound"></label>
   <label class="toggle"><span>Haptics<small>Gentle taps on gestures</small></span><input type="checkbox" id="setHaptics"></label>
   <label class="toggle"><span>Voice first<small>Start recording as soon as capture opens</small></span><input type="checkbox" id="setVoice"></label>
@@ -214,6 +219,6 @@
   <div class="row"><button class="primary" data-close>Close</button></div>
 </dialog>
 
-<script type="module" src="/app.js?v=10"></script>
+<script type="module" src="/app.js?v=11"></script>
 </body>
 </html>

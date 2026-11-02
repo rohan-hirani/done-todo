@@ -1070,10 +1070,83 @@ function queueList(op) {
   S.queue.push(op);
   persist(); render(); scheduleFlush();
 }
-function renderListSettings() {
+// Settings → Edit lists: one row per list with a drag handle, up/down arrows, color dot (recolor), name (rename),
+// delete (inline confirm; tasks move to Personal, never deleted) and an "+ Add list" row. Every change saves at once.
+const I_HANDLE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14M5 12h14M5 16h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>';
+const I_UP = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 14.5l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const I_DOWN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ed = { rename: null, color: null, del: null, adding: false, err: '' };
+const escHtml = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const tasksIn = (id) => Object.values(S.tasks).filter((t) => listOf(t) === id).length;
+function renderListSettings(force) {
   const box = $('#setLists'); if (!box || box.classList.contains('sorting')) return;
-  box.innerHTML = lists().map((l) => `<div class="set-list" data-id="${l.id}" style="--lc:${l.color}"><button type="button" class="grip" aria-label="Drag to reorder">${I_GRIP}</button><button type="button" class="set-edit" data-edit-list="${l.id}"><i class="ldot" aria-hidden="true"></i><span></span>${I_PEN}</button></div>`).join('');
-  lists().forEach((l) => { const b = box.querySelector(`[data-edit-list="${l.id}"]`); $('span', b).textContent = l.name; b.setAttribute('aria-label', `Edit ${l.name}`); $('.grip', b.parentElement).setAttribute('aria-label', `Reorder ${l.name} (drag, or use arrow keys)`); });
+  if (!force && box.contains(document.activeElement) && document.activeElement.matches('input')) return;   // don't clobber typing
+  const ls = lists(), last = ls.length - 1;
+  box.innerHTML = ls.map((l, i) => {
+    const n = escHtml(l.name), canDel = l.id !== 'personal' && ls.length > 1;
+    const name = ed.rename === l.id
+      ? `<input class="le-in" type="text" maxlength="40" enterkeyhint="done" value="${n}" aria-label="List name" autocomplete="off" autocapitalize="words">`
+      : `<button type="button" class="le-nm" data-act="rename" aria-label="Rename ${n}" title="Rename"><span>${n}</span></button>`;
+    let panel = '';
+    if (ed.color === l.id) panel = `<div class="le-panel le-colors" role="radiogroup" aria-label="Color for ${n}">${PALETTE.map((c) => `<button type="button" class="swatch" role="radio" data-act="pick" data-c="${c}" style="--sw:${c}" aria-checked="${c === l.color.toLowerCase()}" aria-label="${c}"></button>`).join('')}<label class="le-pick" title="Custom color"><input type="color" class="le-custom-in" value="${l.color}" aria-label="Custom color"><span>Custom</span></label></div>`;
+    else if (ed.del === l.id) { const k = tasksIn(l.id); panel = `<div class="le-panel le-confirm" role="alert"><p>Delete “${n}”? ${k ? `Its ${k} task${k === 1 ? '' : 's'} (open and archived) move${k === 1 ? 's' : ''} to ${escHtml(listName('personal'))}.` : 'It has no tasks.'} No tasks are deleted.</p><div class="row"><button type="button" class="ghost" data-act="del-cancel">Cancel</button><button type="button" class="primary danger-btn" data-act="del-yes">Delete list</button></div></div>`; }
+    else if (ed.rename === l.id && ed.err) panel = `<p class="le-err" role="alert">${escHtml(ed.err)}</p>`;
+    return `<div class="le-row${ed.color === l.id || ed.del === l.id ? ' expanded' : ''}" role="listitem" data-id="${l.id}" style="--lc:${l.color}">
+      <div class="le-main">
+        <button type="button" class="grip" aria-label="Reorder ${n}: drag, or use arrow keys" title="Drag to reorder">${I_HANDLE}</button>
+        <button type="button" class="le-dot" data-act="color" aria-label="Change color of ${n}" aria-expanded="${ed.color === l.id}" title="Change color"><i class="ldot"></i></button>
+        ${name}
+        <button type="button" class="le-mv" data-act="up" aria-label="Move ${n} up" title="Move up" ${i === 0 ? 'disabled' : ''}>${I_UP}</button>
+        <button type="button" class="le-mv" data-act="down" aria-label="Move ${n} down" title="Move down" ${i === last ? 'disabled' : ''}>${I_DOWN}</button>
+        ${canDel ? `<button type="button" class="le-trash" data-act="delete" aria-label="Delete ${n}" title="Delete list">${I_TRASH}</button>` : `<span class="le-trash le-keep" title="${n} is where tasks of deleted lists go, so it can’t be deleted" aria-hidden="true"></span>`}
+      </div>${panel}</div>`;
+  }).join('') + (ed.adding
+    ? `<div class="le-row le-new" role="listitem"><div class="le-main"><span class="grip" aria-hidden="true"></span><span class="le-dot"><i class="ldot" style="background:${nextColor()}"></i></span><input class="le-in le-add-in" type="text" maxlength="40" enterkeyhint="done" placeholder="New list name" aria-label="New list name" autocomplete="off" autocapitalize="words"><button type="button" class="primary le-add-go" data-act="add-go">Add</button><button type="button" class="le-mv" data-act="add-cancel" aria-label="Cancel" title="Cancel">✕</button></div>${ed.err ? `<p class="le-err" role="alert">${escHtml(ed.err)}</p>` : ''}</div>`
+    : `<button type="button" class="le-add" data-act="add"><span aria-hidden="true">+</span> Add list</button>`);
+  const inp = $('.le-in', box);
+  if (inp && force) { inp.focus(); if (!inp.classList.contains('le-add-in')) inp.select(); }
+}
+const nextColor = () => PALETTE.find((c) => !lists().some((x) => x.color.toLowerCase() === c)) || PALETTE[1];
+function nameError(name, id) {
+  if (!name) return 'Give the list a name.';
+  const clash = lists().find((l) => l.id !== id && (l.name.toLowerCase() === name.toLowerCase() || l.id === name.toLowerCase()));
+  return clash ? `Another list is already called “${clash.name}”.` : '';
+}
+function renameList(id, name) {
+  const prev = listCfg(id); if (!prev || prev.name === name) return;
+  S.lists = lists().map((l) => (l.id === id ? { ...l, name } : l));
+  queueList({ t: 'list', id, name, color: prev.color });   // PATCH /api/lists?id=…
+  toast(`Renamed to “${name}”`, { ms: 1300 });
+}
+function recolorList(id, color) {
+  const prev = listCfg(id); if (!prev || !HEX.test(color) || prev.color.toLowerCase() === color.toLowerCase()) return;
+  S.lists = lists().map((l) => (l.id === id ? { ...l, color } : l));
+  queueList({ t: 'list', id, name: prev.name, color });     // PATCH /api/lists?id=…
+}
+function addList(name, color) {
+  const taken = new Set(listIds().concat(DEFAULT_LISTS.map((l) => l.id)));
+  let id = slugify(name), k = 2; const base = id; while (taken.has(id)) id = `${base}-${k++}`;
+  S.lists = lists().concat({ id, name, color, order: lists().length });
+  queueList({ t: 'newlist', id, name, color });
+  toast(`Added “${name}”`, { ms: 1400 });
+  return id;
+}
+// Same behavior as v9: tasks (open and archived) move to Personal on the client and the server; nothing is deleted.
+function deleteList(id) {
+  if (!id || id === 'personal' || lists().length <= 1) return;
+  const n = tasksIn(id), name = listName(id);
+  for (const t of Object.values(S.tasks)) if (t.list === id) t.list = 'personal';
+  S.lists = lists().filter((l) => l.id !== id);
+  S.queue = S.queue.map((q) => (q.t === 'put' && q.task.list === id ? { ...q, task: { ...q.task, list: 'personal' } } : q)).filter((q) => !(q.t === 'list' && q.id === id));
+  archOpen.delete(id);
+  queueList({ t: 'dellist', id });
+  toast(n ? `Deleted “${name}”. ${n} task${n === 1 ? '' : 's'} moved to ${listName('personal')}.` : `Deleted “${name}”`, { ms: 3000 });
+}
+function moveListBy(id, d) {
+  const ids = listIds(), i = ids.indexOf(id), j = i + d;
+  if (i < 0 || j < 0 || j >= ids.length) return false;
+  ids.splice(i, 1); ids.splice(j, 0, id); saveOrder(ids); buzz(6);
+  return true;
 }
 function leSetColor(c) {
   c = String(c || '').toLowerCase();
@@ -1136,14 +1209,8 @@ $('#leDel').addEventListener('click', () => {
     $('#leDel').textContent = n ? `Delete? ${n} task${n === 1 ? ' moves' : 's move'} to ${listName('personal')}` : 'Tap again to delete';
     return;
   }
-  const name = listName(id);
-  for (const t of Object.values(S.tasks)) if (t.list === id) t.list = 'personal';   // server does the same; tasks are never deleted
-  S.lists = lists().filter((l) => l.id !== id);
-  S.queue = S.queue.map((q) => (q.t === 'put' && q.task.list === id ? { ...q, task: { ...q.task, list: 'personal' } } : q)).filter((q) => !(q.t === 'list' && q.id === id));
-  archOpen.delete(id);
-  queueList({ t: 'dellist', id });
   leDlg.close();
-  toast(n ? `Deleted “${name}”. ${n} task${n === 1 ? '' : 's'} moved to ${listName('personal')}.` : `Deleted “${name}”`, { ms: 3000 });
+  deleteList(id);   // tasks move to Personal; nothing is deleted
 });
 function saveOrder(ids) {
   const cur = listIds();
@@ -1160,43 +1227,93 @@ board.addEventListener('click', (e) => {
   if (headerDragged) { headerDragged = false; return; }
   openListEdit(b.closest('.day').dataset.key);
 }, true);
-$('#setLists').addEventListener('click', (e) => { const b = e.target.closest('[data-edit-list]'); if (b) openListEdit(b.dataset.editList); });
-$('#addListBtn').addEventListener('click', () => openListEdit(null));
-// Settings → Lists: drag the grip (touch or mouse) to reorder; arrow keys on the grip move a list up/down.
 {
   const box = $('#setLists');
+  const commitRename = (inp) => {
+    const id = inp.closest('.le-row').dataset.id, name = inp.value.replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (!name || name === listName(id)) { ed.rename = null; ed.err = ''; renderListSettings(true); return true; }
+    const err = nameError(name, id);
+    if (err) { ed.err = err; renderListSettings(true); return false; }
+    ed.rename = null; ed.err = '';
+    renameList(id, name); renderListSettings(true);
+    return true;
+  };
+  const commitAdd = () => {
+    const inp = $('.le-add-in', box); if (!inp) return;
+    const name = inp.value.replace(/\s+/g, ' ').trim().slice(0, 40);
+    const err = !name ? '' : lists().length >= 20 ? 'That’s the maximum of 20 lists.' : nameError(name, null);
+    if (!name) { ed.adding = false; ed.err = ''; renderListSettings(true); return; }
+    if (err) { ed.err = err; renderListSettings(true); return; }
+    ed.err = ''; addList(name, nextColor());
+    ed.adding = true; renderListSettings(true);   // stay in "add" mode for the next one
+  };
+  box.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+    const open = $('.le-in:not(.le-add-in)', box);   // a rename in progress elsewhere is saved first (iOS taps don't blur reliably)
+    if (open && !(b.closest('.le-row') && b.closest('.le-row').contains(open)) && !commitRename(open)) return;
+    const row = b.closest('.le-row[data-id]') || b.closest('.le-row'), id = row && row.dataset.id, a = b.dataset.act;
+    if (a === 'rename') { Object.assign(ed, { rename: id, color: null, del: null, adding: false, err: '' }); renderListSettings(true); }
+    else if (a === 'color') { Object.assign(ed, { color: ed.color === id ? null : id, del: null, rename: null, err: '' }); renderListSettings(true); buzz(5); }
+    else if (a === 'pick') { recolorList(id, b.dataset.c); buzz(8); ed.color = null; renderListSettings(true); }
+    else if (a === 'up' || a === 'down') { if (moveListBy(id, a === 'up' ? -1 : 1)) { renderListSettings(true); const nb = $(`.le-row[data-id="${id}"] [data-act="${a}"]`, box); (nb && !nb.disabled ? nb : $(`.le-row[data-id="${id}"] .grip`, box)).focus(); } }
+    else if (a === 'delete') { Object.assign(ed, { del: ed.del === id ? null : id, color: null, rename: null, err: '' }); renderListSettings(true); }
+    else if (a === 'del-cancel') { ed.del = null; renderListSettings(true); }
+    else if (a === 'del-yes') { ed.del = null; deleteList(id); buzz(12); renderListSettings(true); }
+    else if (a === 'add') { Object.assign(ed, { adding: true, rename: null, color: null, del: null, err: '' }); renderListSettings(true); }
+    else if (a === 'add-go') commitAdd();
+    else if (a === 'add-cancel') { ed.adding = false; ed.err = ''; renderListSettings(true); }
+  });
+  box.addEventListener('input', (e) => { if (e.target.matches('.le-custom-in')) { const id = e.target.closest('.le-row').dataset.id; recolorList(id, e.target.value.toLowerCase()); const r = e.target.closest('.le-row'); r.style.setProperty('--lc', e.target.value); } });
+  box.addEventListener('change', (e) => { if (e.target.matches('.le-custom-in')) { ed.color = null; renderListSettings(true); } });
+  box.addEventListener('keydown', (e) => {
+    const inp = e.target.closest('.le-in');
+    if (inp && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); inp.classList.contains('le-add-in') ? commitAdd() : commitRename(inp); return; }
+    if (inp && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); Object.assign(ed, { rename: null, adding: false, err: '' }); renderListSettings(true); return; }
+    const g = e.target.closest('.grip'); if (!g || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    e.preventDefault();
+    const id = g.closest('.le-row').dataset.id;
+    if (moveListBy(id, e.key === 'ArrowUp' ? -1 : 1)) { renderListSettings(true); $(`.le-row[data-id="${id}"] .grip`, box).focus(); }
+  });
+  box.addEventListener('focusout', (e) => {
+    const inp = e.target.closest && e.target.closest('.le-in'); if (!inp) return;
+    setTimeout(() => {
+      if (!inp.isConnected || box.contains(document.activeElement) && document.activeElement.closest('.le-row') === inp.closest('.le-row')) return;
+      if (inp.classList.contains('le-add-in')) { if (inp.value.trim()) commitAdd(); else { ed.adding = false; ed.err = ''; renderListSettings(true); } }
+      else commitRename(inp);
+    }, 120);
+  });
+  // Drag the ≡ handle (touch or mouse, no long-press): the row follows the finger and the others make room.
   let sd = null;
   box.addEventListener('pointerdown', (e) => {
-    const g = e.target.closest('.grip'); if (!g) return;
+    const g = e.target.closest('button.grip'); if (!g || (e.pointerType === 'mouse' && e.button !== 0)) return;
     e.preventDefault();
-    const row = g.closest('.set-list');
-    sd = { row, pid: e.pointerId, y: e.clientY };
-    g.setPointerCapture(e.pointerId);
+    const row = g.closest('.le-row'), r = row.getBoundingClientRect();
+    sd = { row, pid: e.pointerId, gy: e.clientY - r.top, moved: false, y0: e.clientY };
+    try { g.setPointerCapture(e.pointerId); } catch {}
     box.classList.add('sorting'); row.classList.add('lifting'); buzz(8);
   });
   box.addEventListener('pointermove', (e) => {
     if (!sd || e.pointerId !== sd.pid) return;
-    const rows = $$('.set-list', box).filter((r) => r !== sd.row);
+    e.preventDefault();
+    if (Math.abs(e.clientY - sd.y0) > 3) sd.moved = true;
+    const rows = $$('.le-row[data-id]', box).filter((r) => r !== sd.row);
     let before = null;
     for (const r of rows) { const rc = r.getBoundingClientRect(); if (e.clientY < rc.top + rc.height / 2) { before = r; break; } }
-    if (before !== sd.row.nextElementSibling) { box.insertBefore(sd.row, before); buzz(4); }
+    if (!before) before = rows.length ? rows[rows.length - 1].nextElementSibling : null;
+    if (before !== sd.row.nextElementSibling && before !== sd.row) { box.insertBefore(sd.row, before); buzz(4); }
+    sd.row.style.transform = '';
+    const nr = sd.row.getBoundingClientRect();
+    sd.row.style.transform = `translateY(${e.clientY - sd.gy - nr.top}px)`;
   });
   const end = () => {
     if (!sd) return;
-    sd.row.classList.remove('lifting'); box.classList.remove('sorting');
-    sd = null;
-    saveOrder($$('.set-list', box).map((r) => r.dataset.id));
-    renderListSettings();
+    const { row } = sd; sd = null;
+    row.classList.remove('lifting'); row.style.transform = ''; box.classList.remove('sorting');
+    saveOrder($$('.le-row[data-id]', box).map((r) => r.dataset.id));
+    renderListSettings(true);
   };
   box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
-  box.addEventListener('keydown', (e) => {
-    const g = e.target.closest('.grip'); if (!g || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
-    e.preventDefault();
-    const ids = listIds(), id = g.closest('.set-list').dataset.id, i = ids.indexOf(id), j = i + (e.key === 'ArrowUp' ? -1 : 1);
-    if (j < 0 || j >= ids.length) return;
-    ids.splice(i, 1); ids.splice(j, 0, id); saveOrder(ids);
-    renderListSettings(); $(`.set-list[data-id="${id}"] .grip`, box).focus();
-  });
+  box.addEventListener('touchmove', (e) => { if (sd) e.preventDefault(); }, { passive: false });
 }
 // Desktop: drag a list's header sideways to reorder the columns.
 {
@@ -1234,8 +1351,16 @@ $('#addListBtn').addEventListener('click', () => openListEdit(null));
 }
 
 const setDlg = $('#settings');
-function openSettings() { renderListSettings(); $('#setSound').checked = !S.muted; $('#setHaptics').checked = S.haptics; $('#setVoice').checked = S.voiceFirst; setDlg.showModal(); }
-$('#settingsBtn').addEventListener('click', openSettings);
+function openSettings(focusLists) { Object.assign(ed, { rename: null, color: null, del: null, adding: false, err: '' }); renderListSettings(true); $('#setSound').checked = !S.muted; $('#setHaptics').checked = S.haptics; $('#setVoice').checked = S.voiceFirst; setDlg.showModal(); }
+$('#settingsBtn').addEventListener('click', () => openSettings(false));
+function openListsEditor() {
+  openSettings(true);
+  setDlg.scrollTop = 0;
+  const sec = $('#listsSec'); sec.classList.remove('flash'); void sec.offsetWidth; sec.classList.add('flash');
+  buzz(6);
+}
+$('#stripEdit').addEventListener('click', openListsEditor);
+$('#listsBtn').addEventListener('click', openListsEditor);
 $('#setSound').addEventListener('change', (e) => { S.muted = !e.target.checked; persist(); if (!S.muted) sfx.pop(false); });
 $('#setHaptics').addEventListener('change', (e) => { S.haptics = e.target.checked; persist(); buzz(15); });
 $('#setVoice').addEventListener('change', (e) => { S.voiceFirst = e.target.checked; persist(); });
