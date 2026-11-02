@@ -2,7 +2,8 @@
 
 A calm to-do list organised by topic, in the spirit of TeuxDeux. Installable PWA, works offline, stores tasks in Vercel Blob, and tasks can be added remotely with one HTTP call or one SQL statement.
 
-- **Topic lists**: **Personal**, **Website**, **Investor Relations**, **Social Media**. They are the main navigation: four columns on desktop, swipeable pages with a segmented switcher (Personal / Website / IR / Social) on mobile; the header button on mobile switches between one list at a time and all lists stacked. Every task has a `list` (`personal`, `website`, `ir`, `social`); tasks from before lists existed (including everything that was on Today, Someday or any day) live in **Personal** (server-side backfill, see below). Move a task with the `⋯` menu / swipe-left **Move** → *Move to*, by dragging it to another column, or with `Alt+←→`.
+- **Topic lists**: four lists, by default **Personal**, **Strategy.com**, **Investor Relations**, **Social Media**. They are the main navigation: four columns on desktop, swipeable pages with a segmented switcher on mobile; the header button on mobile switches between one list at a time and all lists stacked. Every task has a `list` (`personal`, `website`, `ir`, `social`); tasks from before lists existed (including everything that was on Today, Someday or any day) live in **Personal** (server-side backfill, see below). Ids never change, so a rename never moves or breaks anything. Move a task with the `⋯` menu / swipe-left **Move** → *Move to*, by dragging it to another column, or with `Alt+←→`.
+- **List names & colors**: tap a list's name (column header) or open **Settings → Lists** to rename it and pick a color from the palette (or any custom hex). Settings are stored server-side in the blob doc as `lists: [{id, name, color}]`, so every device shows the same names and colors (offline edits are queued like task edits). Colors show as a dot next to the name, the top accent of the column on desktop, the mobile switcher and the capture chips.
 - **Archive**: completing a task plays the usual animation and undo toast; the task then stays in its list, crossed out and sorted to the bottom, for the rest of the day it was completed (America/New_York). Unchecking it during that day simply restores it. Overnight (once the NY date of `done_at` is before today) it moves into that list's **Archive**. The archive is hidden by default; **View archive (N)** at the bottom of each list opens it (newest first, with the completion date and time). Tapping the check on an archived task restores it to the active list (with Undo). Nothing is ever auto-deleted.
 - **Due dates (optional)**: a task can have a due date (shown under the title, red when due today). Rollover, streaks and Insights keep working off dates in the background.
 - **Zero-friction capture**: a floating **+** button, a **swipe up from the bottom** of the screen (mobile), or on desktop **any letter key / `n` / `/`**. The capture sheet opens with the input focused and the keyboard up. `Enter` adds and keeps the sheet open for rapid multi-add; swipe down, tap outside or `Esc` closes. Chips pick the **list** (defaults to the list you're viewing) and an optional **due date** (No date / Today / Tomorrow / a date). Natural phrases are parsed and stripped from the title: `tomorrow`, `friday`, `next week`, `this weekend`, `in 3 days`, `someday` (= no due date) (only at the start or end of the title, e.g. "Call mom by friday").
@@ -39,6 +40,7 @@ All `/api/*` routes (`tasks`, `stats`, POST `transcribe`) require that cookie **
 ```
 public/            static PWA (no build step): index.html, app.js, fx.js (confetti), sound.js, sw.js, manifest, icons
 api/tasks.js       GET/POST/PATCH/DELETE  (password cookie or x-passcode header; stores everything in one JSON document in a private Vercel Blob)
+api/lists.js       GET/PATCH list names & colors (stored in the same blob doc as data.lists)
 api/stats.js       GET productivity stats (on-time rate, streaks, rollovers, daily + weekday breakdown)
 api/transcribe.js  POST audio -> text via Groq Whisper (501 without GROQ_API_KEY)
 api/login.js       POST password -> long-lived auth cookie
@@ -59,7 +61,7 @@ All tasks live in one JSON document (`done/tasks.json`) in a **private Vercel Bl
 | --- | --- |
 | `BLOB_READ_WRITE_TOKEN` | added automatically when you connect a Blob store to the project |
 | `DONE_SECRET` | HMAC secret for the auth cookie (required in production) |
-| `APP_PASSCODE` | optional, default `rohan` |
+| `APP_PASSCODE` | the app password (set this in production; there is only a weak built-in fallback for local dev) |
 | `APP_TZ` | optional, default `America/New_York`: what "today" means for API calls that omit `date` |
 
 Until a Blob store is connected the app still works fully on-device ("local only") and the API answers `503 storage_not_configured`.
@@ -68,15 +70,17 @@ Until a Blob store is connected the app still works fully on-device ("local only
 
 ```bash
 curl -X POST https://done-todo-rohan-hirani.vercel.app/api/tasks \
-  -H "content-type: application/json" -H "x-passcode: rohan" \
+  -H "content-type: application/json" -H "x-passcode: $DONE_PASSCODE" \
   -d '{"title":"Call the dentist","date":"tomorrow"}'
 
 curl -X POST https://done-todo-rohan-hirani.vercel.app/api/tasks \
-  -H "content-type: application/json" -H "x-passcode: rohan" \
+  -H "content-type: application/json" -H "x-passcode: $DONE_PASSCODE" \
   -d '{"title":"Send Q4 investor update","list":"ir","date":null}'
 ```
 
-`list` is optional: `personal` (default), `website`, `ir`, `social` (also accepts `"Investor Relations"`, `"Social Media"`); anything else returns `400`. `GET /api/tasks` returns `list` on every task.
+`list` is optional: a list id, `personal` (default), `website`, `ir`, `social`, **or** the list's current display name, case-insensitive (e.g. `"Strategy.com"`, `"Investor Relations"`); ids win if a name ever equals an id. Anything else returns `400` (the error names the current lists). `GET /api/tasks` returns `{tasks, lists}`: `list` (the id) on every task, plus `lists: [{id, name, color}]`.
+
+List settings: `GET /api/lists` → `{lists}`; `PATCH /api/lists?id=<id or name>` with `{"name"?, "color"?: "#rrggbb"}` renames / recolors one list (names must be unique, 1-40 chars).
 
 `date` may be omitted (= today in `APP_TZ`), `"today"`, `"tomorrow"`, `"YYYY-MM-DD"`, or `null` / `"someday"` for the Someday list. Optional: `source` (e.g. `"assistant"`). A missing/wrong passcode returns `401`. Returns `201 {"task": {...}}`.
 
