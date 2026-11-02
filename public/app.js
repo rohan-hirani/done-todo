@@ -108,14 +108,21 @@ function streak() {
   while (days.has(k)) { n++; k = addDays(k, -1); }
   return n;
 }
-// Active tasks of a topic list. A task you just completed lingers for the undo window, then moves to the archive.
-const linger = new Set();
+// Completion day is judged in America/New_York (the app's home zone, same as the server).
+const nyDayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
+const nyToday = () => nyDayFmt.format(new Date());
+const doneDayNY = (t) => (t.done_at ? nyDayFmt.format(new Date(t.done_at)) : '');
+const doneToday = (t) => t.done && doneDayNY(t) >= nyToday();
+// Active tasks of a topic list: open tasks first (starred, then manual order), then today's completed tasks,
+// crossed out at the bottom. Completed tasks stay until the NY day they were done is over, then move to the archive.
 function activeList(key) {
-  return Object.values(S.tasks).filter((t) => listOf(t) === key && (!t.done || linger.has(t.id)))
-    .sort((a, b) => ((b.pinned && !b.done ? 1 : 0) - (a.pinned && !a.done ? 1 : 0)) || a.position - b.position);
+  const all = Object.values(S.tasks).filter((t) => listOf(t) === key && (!t.done || doneToday(t)));
+  const open = all.filter((t) => !t.done).sort((a, b) => ((b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) || a.position - b.position);
+  const done = all.filter((t) => t.done).sort((a, b) => (a.done_at || '').localeCompare(b.done_at || ''));
+  return open.concat(done);
 }
-// Archive of a topic list: completed tasks, newest first. Nothing is ever auto-deleted.
-const archiveOf = (key) => Object.values(S.tasks).filter((t) => listOf(t) === key && t.done && !linger.has(t.id))
+// Archive of a topic list: tasks completed before today (NY), newest first. Nothing is ever auto-deleted.
+const archiveOf = (key) => Object.values(S.tasks).filter((t) => listOf(t) === key && t.done && !doneToday(t))
   .sort((a, b) => (b.done_at || '').localeCompare(a.done_at || '') || (b.updated_at || '').localeCompare(a.updated_at || ''));
 // Today's progress (header ring): what's due today or earlier, plus everything finished today.
 const todaySet = () => { const k = todayKey(); return Object.values(S.tasks).filter((t) => (t.done ? doneKey(t) === k : t.date && t.date <= k)); };
@@ -310,7 +317,6 @@ function toggle(id, origin, { quiet = false, undoable = true } = {}) {
   if (!t) return;
   const wasFull = isTodayFull();
   const done = !t.done;
-  if (done) { linger.add(id); setTimeout(() => { if (linger.delete(id)) render(); }, 3400); } else linger.delete(id);
   put({ ...t, done, done_at: done ? nowIso() : null });
   if (!done) return;
   if (quiet) return;
@@ -1041,8 +1047,8 @@ setInterval(() => { if (!document.hidden) sync(); }, 15000);
 addEventListener('focus', sync);
 addEventListener('online', sync);
 addEventListener('offline', () => setMode('offline'));
-let renderedDay = todayKey();
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { sync(); if (renderedDay !== todayKey()) { renderedDay = todayKey(); render(); } } });
+let renderedDay = nyToday();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { sync(); if (renderedDay !== nyToday()) { renderedDay = nyToday(); render(); } } });
 
 $('#syncBtn').addEventListener('click', () => { sync(); toast(S.mode === 'offline' ? 'Offline. Will save when you’re back.' : 'Refreshed', { ms: 1200 }); });
 
@@ -1071,6 +1077,6 @@ render();
     setTimeout(() => openCapture(), 80);
   }
 })();
-setInterval(() => { if (renderedDay !== todayKey()) { renderedDay = todayKey(); render(); } }, 60000);
+setInterval(() => { if (renderedDay !== nyToday()) { renderedDay = nyToday(); render(); } }, 60000);
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 window.__done = { S, render, openCapture };

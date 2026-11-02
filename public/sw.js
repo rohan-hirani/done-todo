@@ -1,6 +1,6 @@
-const VERSION = 'done-v8';
+const VERSION = 'done-v9';
 const CDN = 'done-cdn-v1';   // Transformers.js + onnx wasm from jsdelivr, kept across app versions for offline voice
-const SHELL = ['/', '/styles.css?v=8', '/app.js?v=8', '/fx.js', '/sound.js', '/nlp.js', '/voice.js', '/stt-worker.js?v=4', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png'];
+const SHELL = ['/', '/styles.css?v=9', '/app.js?v=9', '/fx.js', '/sound.js', '/nlp.js', '/voice.js', '/stt-worker.js?v=4', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
