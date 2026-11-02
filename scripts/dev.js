@@ -1,6 +1,6 @@
 // Local dev server: serves /public and /api/* and, with an in-memory task store
 // (unless BLOB_READ_WRITE_TOKEN is set) so you can try everything offline.
-//   npm run dev        ->  http://localhost:3000   (password: "rohan")
+//   npm run dev        ->  http://localhost:3000   (password set via APP_PASSCODE)
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -29,4 +29,4 @@ http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[path.extname(p)] || 'application/octet-stream' });
     fs.createReadStream(p).pipe(res);
   });
-}).listen(PORT, () => console.log(`Done dev server on http://localhost:${PORT} (password: rohan)`));
+}).listen(PORT, () => console.log(`Done dev server on http://localhost:${PORT} (password set via APP_PASSCODE)`));
