@@ -20,24 +20,32 @@ const S = {
   voiceFirst: !!saved.voiceFirst,
   view: saved.view || 'focus',
   days: saved.days || 7,
+  lists: saved.lists || null,
   mode: 'local',
 };
 function persist() {
-  localStorage.setItem(LS, JSON.stringify({ tasks: S.tasks, queue: S.queue, muted: S.muted, haptics: S.haptics, voiceFirst: S.voiceFirst, view: S.view, days: S.days }));
+  localStorage.setItem(LS, JSON.stringify({ tasks: S.tasks, queue: S.queue, muted: S.muted, haptics: S.haptics, voiceFirst: S.voiceFirst, view: S.view, days: S.days, lists: S.lists }));
 }
 const buzz = (p) => { if (S.haptics && navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate(p); };
 
 /* ───────────── topic lists ───────────── */
-const LISTS = [
-  { id: 'personal', name: 'Personal', short: 'Personal' },
-  { id: 'website', name: 'Website', short: 'Website' },
-  { id: 'ir', name: 'Investor Relations', short: 'IR' },
-  { id: 'social', name: 'Social Media', short: 'Social' },
+// Stable ids never change; names and colors are user-editable and synced via the server (data.lists).
+const DEFAULT_LISTS = [
+  { id: 'personal', name: 'Personal', color: '#e5484d' },
+  { id: 'website', name: 'Strategy.com', color: '#2f6bff' },
+  { id: 'ir', name: 'Investor Relations', color: '#2fb36d' },
+  { id: 'social', name: 'Social Media', color: '#a855f7' },
 ];
-const LIST_IDS = LISTS.map((l) => l.id);
+const LIST_IDS = DEFAULT_LISTS.map((l) => l.id);
+const LIST_SHORT = { 'investor relations': 'IR', 'social media': 'Social' };
+const HEX = /^#[0-9a-f]{6}$/i;
+const lists = () => DEFAULT_LISTS.map((d) => { const s = (S.lists || []).find((x) => x && x.id === d.id) || {}; return { id: d.id, name: (s.name || '').trim() || d.name, color: HEX.test(s.color || '') ? s.color : d.color }; });
+const listCfg = (id) => lists().find((l) => l.id === id) || lists()[0];
 const listOf = (t) => (LIST_IDS.includes(t.list) ? t.list : 'personal');   // tasks from before lists existed live in Personal
-const listName = (id) => (LISTS.find((l) => l.id === id) || LISTS[0]).name;
-const listShort = (id) => (LISTS.find((l) => l.id === id) || LISTS[0]).short;
+const listName = (id) => listCfg(id).name;
+const listColor = (id) => listCfg(id).color;
+// Compact label for the mobile chip strip / capture summary: short names as-is, long multi-word names abbreviated.
+const listShort = (id) => { const n = listName(id); if (LIST_SHORT[n.toLowerCase()]) return LIST_SHORT[n.toLowerCase()]; return n.length <= 13 ? n : n.split(' ')[0].slice(0, 13); };
 
 /* ───────────── dates ───────────── */
 const pad = (n) => String(n).padStart(2, '0');
@@ -136,6 +144,7 @@ let activeKey = 'personal';
 
 const ICON_MORE = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg>';
 const ICON_CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle class="box" cx="12" cy="12" r="10"/><circle class="fill" cx="12" cy="12" r="10.8"/><path class="tick" d="M7 12.5l3.4 3.4L17 8.8"/></svg>';
+const I_PEN = '<svg class="pen" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const I_STAR = '<svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.5 6 .8-4.4 4.2 1.1 6-5.3-2.9-5.3 2.9 1.1-6L3.4 9.8l6-.8z" fill="currentColor"/></svg>';
 const I_MOVE = '<svg viewBox="0 0 24 24"><path d="M4 12h14m-5-5l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const I_TRASH = '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2m-6 0l1 12h6l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -146,30 +155,54 @@ function buildBoard() {
   builtFor = 'lists';
   board.textContent = '';
   strip.textContent = '';
-  LISTS.forEach((c) => {
+  lists().forEach((c) => {
     const sec = document.createElement('section');
     sec.className = 'day list-col';
     sec.dataset.key = c.id;
-    sec.setAttribute('aria-label', c.name);
-    sec.innerHTML = `<header><h2>${c.name}</h2><span class="sub"></span></header>
-      <form class="add" autocomplete="off"><span class="plus" aria-hidden="true">+</span><input type="text" enterkeyhint="done" placeholder="Add to ${c.name}" aria-label="Add task to ${c.name}" maxlength="500"></form>
+    sec.innerHTML = `<header><h2><button type="button" class="list-name" title="Rename or recolor this list"><i class="ldot" aria-hidden="true"></i><span class="lname"></span>${I_PEN}</button></h2><span class="sub"></span></header>
+      <form class="add" autocomplete="off"><span class="plus" aria-hidden="true">+</span><input type="text" enterkeyhint="done" maxlength="500"></form>
       <div class="scroll">
         <ul class="list" role="list"></ul>
         <p class="empty">Nothing open here. Add something.</p>
         <div class="arch" hidden>
           <button type="button" class="arch-btn" aria-expanded="false"></button>
-          <ul class="arch-list" role="list" aria-label="${c.name} archive" hidden></ul>
+          <ul class="arch-list" role="list" hidden></ul>
         </div>
       </div>`;
     board.appendChild(sec);
     const chip = document.createElement('button');
     chip.className = 'chip';
     chip.dataset.key = c.id;
-    chip.innerHTML = `${c.short}<small></small>`;
+    chip.innerHTML = `<span class="cname"></span><small></small>`;
     chip.addEventListener('click', () => scrollToKey(c.id));
     strip.appendChild(chip);
   });
+  appliedLists = '';
+  applyLists();
   observeActive();
+}
+// Paint list names/colors everywhere they appear (columns, chip strip, capture chips, task menu, settings).
+let appliedLists = '';
+function applyLists() {
+  const ls = lists(), sig = JSON.stringify(ls);
+  if (sig === appliedLists) return;
+  appliedLists = sig;
+  for (const c of ls) {
+    const sec = board.querySelector(`.day[data-key="${c.id}"]`);
+    if (sec) {
+      sec.style.setProperty('--lc', c.color);
+      sec.setAttribute('aria-label', c.name);
+      $('.lname', sec).textContent = c.name;
+      $('.list-name', sec).setAttribute('aria-label', `${c.name}. Edit list name and color`);
+      const inp = $('.add input', sec); inp.placeholder = `Add to ${c.name}`; inp.setAttribute('aria-label', `Add task to ${c.name}`);
+      $('.arch-list', sec).setAttribute('aria-label', `${c.name} archive`);
+    }
+    const chip = strip.querySelector(`.chip[data-key="${c.id}"]`);
+    if (chip) { chip.style.setProperty('--lc', c.color); $('.cname', chip).textContent = listShort(c.id); }
+    $$(`.cchip[data-list="${c.id}"]`).forEach((b) => { b.style.setProperty('--lc', c.color); b.textContent = c.name; });
+    $$(`[data-act="list:${c.id}"]`).forEach((b) => { b.style.setProperty('--lc', c.color); b.textContent = c.name; });
+  }
+  renderListSettings();
 }
 
 const taskSig = (t, key) => [t.title, t.done, t.date, t.pinned, todayKey()].join('\u0001');
@@ -201,6 +234,7 @@ function updateLi(li, t, key) {
 }
 
 function render() {
+  applyLists();
   rollLocal();
   buildBoard();
   document.body.classList.toggle('view-focus', S.view === 'focus');
@@ -964,8 +998,58 @@ const I_FOCUS = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="no
 const I_LIST = '<svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h14" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>';
 function renderView() { $('#viewBtn').innerHTML = S.view === 'focus' ? I_LIST : I_FOCUS; $('#viewBtn').title = S.view === 'focus' ? 'Show all lists' : 'One list at a time'; $('#viewBtn').setAttribute('aria-label', $('#viewBtn').title); document.body.classList.toggle('view-focus', S.view === 'focus'); document.body.classList.toggle('view-overview', S.view !== 'focus'); }
 $('#viewBtn').addEventListener('click', () => { S.view = S.view === 'focus' ? 'overview' : 'focus'; persist(); renderView(); render(); board.scrollTo({ left: 0, top: 0 }); setActive(LIST_IDS[0]); toast(S.view === 'focus' ? 'One list at a time' : 'All lists', { ms: 1200 }); });
+/* ───────────── list names & colors ───────────── */
+const PALETTE = ['#e5484d', '#f76b15', '#e2a50b', '#2fb36d', '#12a594', '#0b9fd8', '#2f6bff', '#5b5bd6', '#a855f7', '#e93d82', '#ad7f58', '#7d838d'];
+const leDlg = $('#listEdit');
+let leId = null;
+function renderListSettings() {
+  const box = $('#setLists'); if (!box) return;
+  box.innerHTML = lists().map((l) => `<button type="button" class="set-list" data-edit-list="${l.id}" style="--lc:${l.color}"><i class="ldot" aria-hidden="true"></i><span></span>${I_PEN}</button>`).join('');
+  lists().forEach((l) => { const b = box.querySelector(`[data-edit-list="${l.id}"]`); $('span', b).textContent = l.name; b.setAttribute('aria-label', `Edit ${l.name}`); });
+}
+function leSetColor(c) {
+  c = String(c || '').toLowerCase();
+  $$('.swatch', leDlg).forEach((b) => b.setAttribute('aria-checked', String(b.dataset.c === c)));
+  if (HEX.test(c)) { $('#leHex').value = c; $('#leColor').value = c; leDlg.style.setProperty('--lc', c); }
+}
+function openListEdit(id) {
+  leId = id;
+  const l = listCfg(id);
+  $('#leTitle').textContent = 'Edit list';
+  $('#leName').value = l.name;
+  $('#leErr').textContent = '';
+  $('#leSwatches').innerHTML = PALETTE.map((c) => `<button type="button" class="swatch" role="radio" data-c="${c}" style="--sw:${c}" aria-label="${c}"></button>`).join('');
+  leSetColor(l.color);
+  if (setDlg.open) setDlg.close();
+  leDlg.showModal();
+  if (!isMobile()) setTimeout(() => $('#leName').select(), 30);
+}
+$('#leSwatches').addEventListener('click', (e) => { const b = e.target.closest('.swatch'); if (b) { leSetColor(b.dataset.c); buzz(8); } });
+$('#leColor').addEventListener('input', (e) => leSetColor(e.target.value));
+$('#leHex').addEventListener('input', (e) => { let v = e.target.value.trim(); if (/^[0-9a-f]{6}$/i.test(v)) v = '#' + v; if (HEX.test(v)) leSetColor(v); });
+$('#leForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const name = $('#leName').value.replace(/\s+/g, ' ').trim().slice(0, 40);
+  let color = $('#leHex').value.trim().toLowerCase(); if (/^[0-9a-f]{6}$/.test(color)) color = '#' + color;
+  const err = (m) => { $('#leErr').textContent = m; };
+  if (!name) return err('Give the list a name.');
+  if (!HEX.test(color)) return err('Pick a color, or type a hex like #2f6bff.');
+  const clash = lists().find((l) => l.id !== leId && (l.name.toLowerCase() === name.toLowerCase() || l.id === name.toLowerCase()));
+  if (clash) return err(`Another list is already called “${clash.name}”.`);
+  const prev = listCfg(leId);
+  if (prev.name === name && prev.color === color) { leDlg.close(); return; }
+  S.lists = lists().map((l) => (l.id === leId ? { ...l, name, color } : l));
+  S.queue = S.queue.filter((q) => !(q.t === 'list' && q.id === leId));
+  S.queue.push({ t: 'list', id: leId, name, color });
+  persist(); render(); scheduleFlush();
+  leDlg.close();
+  toast(`Saved “${name}”`, { ms: 1400 });
+});
+board.addEventListener('click', (e) => { const b = e.target.closest('.list-name'); if (b) { e.stopPropagation(); openListEdit(b.closest('.day').dataset.key); } }, true);
+$('#setLists').addEventListener('click', (e) => { const b = e.target.closest('[data-edit-list]'); if (b) openListEdit(b.dataset.editList); });
+
 const setDlg = $('#settings');
-function openSettings() { $('#setSound').checked = !S.muted; $('#setHaptics').checked = S.haptics; $('#setVoice').checked = S.voiceFirst; setDlg.showModal(); }
+function openSettings() { renderListSettings(); $('#setSound').checked = !S.muted; $('#setHaptics').checked = S.haptics; $('#setVoice').checked = S.voiceFirst; setDlg.showModal(); }
 $('#settingsBtn').addEventListener('click', openSettings);
 $('#setSound').addEventListener('change', (e) => { S.muted = !e.target.checked; persist(); if (!S.muted) sfx.pop(false); });
 $('#setHaptics').addEventListener('change', (e) => { S.haptics = e.target.checked; persist(); buzz(15); });
@@ -1019,7 +1103,9 @@ async function sync() {
       const q = S.queue[0];
       const r = q.t === 'put'
         ? await api('/api/tasks', { method: 'POST', body: JSON.stringify(q.task) })
-        : await api('/api/tasks?id=' + encodeURIComponent(q.id), { method: 'DELETE' });
+        : q.t === 'list'
+          ? await api('/api/lists?id=' + encodeURIComponent(q.id), { method: 'PATCH', body: JSON.stringify({ name: q.name, color: q.color }) })
+          : await api('/api/tasks?id=' + encodeURIComponent(q.id), { method: 'DELETE' });
       if (r.status === 401) { showGate(); return; }
       if (r.status === 503) return setMode('local');
       if (r.status === 409 || r.status === 429 || r.status >= 500) { setTimeout(sync, 2500); throw new Error('retry'); }
@@ -1030,8 +1116,9 @@ async function sync() {
     if (r.status === 401) { showGate(); return; }
     if (r.status === 503) return setMode('local');
     if (!r.ok) throw new Error('server');
-    const { tasks } = await r.json();
-    const pending = new Set(S.queue.map((q) => (q.t === 'put' ? q.task.id : q.id)));
+    const { tasks, lists: serverLists } = await r.json();
+    if (Array.isArray(serverLists) && !S.queue.some((q) => q.t === 'list')) S.lists = serverLists.map(({ id, name, color }) => ({ id, name, color }));
+    const pending = new Set(S.queue.filter((q) => q.t !== 'list').map((q) => (q.t === 'put' ? q.task.id : q.id)));
     const seen = new Set();
     for (const t of tasks) {
       seen.add(t.id);

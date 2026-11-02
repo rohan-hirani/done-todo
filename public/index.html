@@ -84,7 +84,7 @@
     </div>
     <div class="chips-row lists-row" id="capLists" role="radiogroup" aria-label="List">
       <button type="button" class="cchip" role="radio" data-list="personal">Personal</button>
-      <button type="button" class="cchip" role="radio" data-list="website">Website</button>
+      <button type="button" class="cchip" role="radio" data-list="website">Strategy.com</button>
       <button type="button" class="cchip" role="radio" data-list="ir">Investor Relations</button>
       <button type="button" class="cchip" role="radio" data-list="social">Social Media</button>
     </div>
@@ -114,7 +114,7 @@
 <div class="menu" id="menu" role="menu" hidden>
   <p class="menu-cap">Move to</p>
   <button role="menuitem" data-act="list:personal">Personal</button>
-  <button role="menuitem" data-act="list:website">Website</button>
+  <button role="menuitem" data-act="list:website">Strategy.com</button>
   <button role="menuitem" data-act="list:ir">Investor Relations</button>
   <button role="menuitem" data-act="list:social">Social Media</button>
   <hr>
@@ -135,6 +135,8 @@
 
 <dialog id="settings" class="sheet">
   <h2>Settings</h2>
+  <div class="set-sec"><span>Lists<small>Tap a list to rename it or change its color. Synced to all your devices.</small></span></div>
+  <div class="set-lists" id="setLists"></div>
   <label class="toggle"><span>Sound<small>A soft pop when you finish something</small></span><input type="checkbox" id="setSound"></label>
   <label class="toggle"><span>Haptics<small>Gentle taps on gestures</small></span><input type="checkbox" id="setHaptics"></label>
   <label class="toggle"><span>Voice first<small>Start recording as soon as capture opens</small></span><input type="checkbox" id="setVoice"></label>
@@ -142,6 +144,22 @@
         <button class="ghost" id="setHelp">Shortcuts</button>
   </div>
   <div class="row"><button class="primary" data-close>Done</button></div>
+</dialog>
+
+<dialog id="listEdit" class="sheet list-edit" aria-labelledby="leTitle">
+  <form id="leForm" autocomplete="off">
+    <h2 id="leTitle">Edit list</h2>
+    <label class="le-lbl" for="leName">Name</label>
+    <div class="le-name"><i class="ldot" aria-hidden="true"></i><input id="leName" type="text" maxlength="40" enterkeyhint="done" required></div>
+    <span class="le-lbl" id="leColorLbl">Color</span>
+    <div class="swatches" id="leSwatches" role="radiogroup" aria-labelledby="leColorLbl"></div>
+    <div class="le-custom">
+      <label class="le-pick" title="Custom color"><input type="color" id="leColor" aria-label="Custom color"><span>Custom</span></label>
+      <input id="leHex" type="text" maxlength="7" spellcheck="false" autocapitalize="off" aria-label="Hex color" placeholder="#2f6bff">
+    </div>
+    <p class="err" id="leErr" role="alert"></p>
+    <div class="row"><button type="button" class="ghost" data-close>Cancel</button><button type="submit" class="primary">Save</button></div>
+  </form>
 </dialog>
 
 <dialog id="helpSheet" class="sheet">

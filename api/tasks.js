@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { parseList, authed, configured, load, mutate, cors, json, readBody, parseDate, dateOrNull, normalize, UUID } = require('./_lib');
+const { parseList, listSettings, authed, configured, load, mutate, cors, json, readBody, parseDate, dateOrNull, normalize, UUID } = require('./_lib');
 
 const validIso = (v) => { const d = new Date(v); return v && !isNaN(d) ? d.toISOString() : null; };
 
@@ -22,7 +22,7 @@ function fields(b, { partial }) {
     out.position = p;
   }
   if (b.pinned !== undefined) out.pinned = !!b.pinned;
-  if (b.list !== undefined) out.list = parseList(b.list);
+  if (b.list !== undefined && b.list !== null && b.list !== '') out.list = String(b.list);   // resolved against current list names inside mutate()
   if (b.planned_date !== undefined) out.planned_date = dateOrNull(b.planned_date);
   if (b.original_date !== undefined) out.original_date = dateOrNull(b.original_date);
   if (b.rollovers !== undefined) out.rollovers = Math.max(0, Math.min(10000, parseInt(b.rollovers, 10) || 0));
@@ -31,11 +31,12 @@ function fields(b, { partial }) {
 }
 
 /**
- * GET    /api/tasks              list tasks
- * POST   /api/tasks              {title, list?, date?, ...}  create (list: personal|website|ir|social, default personal) (or upsert when "id" is given; newest updated_at wins)
+ * GET    /api/tasks              {tasks, lists}  (lists = [{id, name, color}] display settings)
+ * POST   /api/tasks              {title, list?, date?, ...}  create (or upsert when "id" is given; newest updated_at wins)
+ *                                 list: id (personal|website|ir|social) or the list's current display name; default personal
  * PATCH  /api/tasks?id=<uuid>    partial update (title, list, date, done, position)
  * DELETE /api/tasks?id=<uuid>    delete
- * No auth: the API is open to anyone with the URL (an x-passcode header is accepted and ignored).
+ * Requires the password cookie or an x-passcode header (see README).
  */
 module.exports = async (req, res) => {
   cors(res);
@@ -49,7 +50,7 @@ module.exports = async (req, res) => {
       const { data } = await load();
       if (normalize(data)) await mutate(() => true).catch(() => {});   // persist rollover (mutate normalizes before fn); best-effort
       const tasks = Object.values(data.tasks).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-      return json(res, 200, { tasks });
+      return json(res, 200, { tasks, lists: listSettings(data).map(({ id, name, color }) => ({ id, name, color })) });
     }
     if (req.method === 'POST') {
       const b = readBody(req);
@@ -61,6 +62,7 @@ module.exports = async (req, res) => {
       const stamp = (upsert && validIso(b.updated_at)) || now;
       let created = true;
       const task = await mutate((data) => {
+        if (f.list) f.list = parseList(f.list, listSettings(data));
         const old = data.tasks[tid];
         if (data.deleted[tid] && data.deleted[tid] >= stamp) return { skip: true, value: null };   // deleted after this write
         if (old && old.updated_at > stamp) { created = false; return { skip: true, value: old }; } // newer version already stored
@@ -84,6 +86,7 @@ module.exports = async (req, res) => {
       if (!id || !UUID.test(id)) throw new Error('?id=<uuid> required');
       const f = fields(readBody(req), { partial: true });
       const task = await mutate((data) => {
+        if (f.list) f.list = parseList(f.list, listSettings(data));
         const old = data.tasks[id];
         if (!old) return { skip: true, value: null };
         const moved = f.date !== undefined && f.date !== old.date;
