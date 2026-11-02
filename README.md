@@ -1,20 +1,23 @@
 # Done
 
-A calm, day-by-day to-do list in the spirit of TeuxDeux. Installable PWA, works offline, stores tasks in Vercel Blob, and tasks can be added remotely with one HTTP call or one SQL statement.
+A calm to-do list organised by topic, in the spirit of TeuxDeux. Installable PWA, works offline, stores tasks in Vercel Blob, and tasks can be added remotely with one HTTP call or one SQL statement.
 
-- **Days**: Today, Tomorrow, then the next days as columns (desktop) or swipeable pages (mobile), plus a **Someday** list. On mobile the default is **Focus** (Today with a big progress ring, swipe between days); the header button switches to an all-days overview.
-- **Zero-friction capture**: a floating **+** button, a **swipe up from the bottom** of the screen (mobile), or on desktop **any letter key / `n` / `/`**. The capture sheet opens with the input focused and the keyboard up. `Enter` adds and keeps the sheet open for rapid multi-add; swipe down, tap outside or `Esc` closes. Chips pick Today / Tomorrow / Someday / a date. Natural phrases are parsed and stripped from the title: `tomorrow`, `friday`, `next week`, `this weekend`, `in 3 days`, `someday` (only at the start or end of the title, e.g. "Call mom by friday").
+- **Topic lists**: **Personal**, **Website**, **Investor Relations**, **Social Media**. They are the main navigation: four columns on desktop, swipeable pages with a segmented switcher (Personal / Website / IR / Social) on mobile; the header button on mobile switches between one list at a time and all lists stacked. Every task has a `list` (`personal`, `website`, `ir`, `social`); tasks from before lists existed (including everything that was on Today, Someday or any day) live in **Personal** (server-side backfill, see below). Move a task with the `⋯` menu / swipe-left **Move** → *Move to*, by dragging it to another column, or with `Alt+←→`.
+- **Archive**: completing a task plays the usual animation and undo toast, then the task leaves the active list and goes to that list's **Archive**. The archive is hidden by default; **View archive (N)** at the bottom of each list opens it (newest first, with the completion date and time). Tapping the check on an archived task restores it to the active list (with Undo). Nothing is ever auto-deleted.
+- **Due dates (optional)**: a task can have a due date (shown under the title, red when due today). Rollover, streaks and Insights keep working off dates in the background.
+- **Zero-friction capture**: a floating **+** button, a **swipe up from the bottom** of the screen (mobile), or on desktop **any letter key / `n` / `/`**. The capture sheet opens with the input focused and the keyboard up. `Enter` adds and keeps the sheet open for rapid multi-add; swipe down, tap outside or `Esc` closes. Chips pick the **list** (defaults to the list you're viewing) and an optional **due date** (No date / Today / Tomorrow / a date). Natural phrases are parsed and stripped from the title: `tomorrow`, `friday`, `next week`, `this weekend`, `in 3 days`, `someday` (= no due date) (only at the start or end of the title, e.g. "Call mom by friday").
 - **Voice**: tap the big mic: the app records in-app (MediaRecorder; `audio/mp4` on iOS, webm/ogg elsewhere) with a live waveform and timer, and stops when you tap again or after ~1.5 s of silence (max ~60 s). Audio is transcribed by **Groq Whisper** when the server has a key, otherwise by **Whisper-tiny on your device**. One utterance = one task; "and then" / "also" splits it into several with a confirm preview, and dates like "tomorrow" are parsed. **Voice first** (Settings) starts recording when capture opens.
 - **Gestures**: swipe a task **right** to complete it (confetti, haptic, undo toast), **left** to reveal Top 3 / Move / Delete. Long-press (touch) or drag (mouse) to reorder or move between days. Pull down to refresh. Star up to 3 tasks as the day's **Top 3**.
 - **Carried over**: unfinished tasks from past days roll forward into Today.
 - **Dopamine**: animated checkbox, strike-through sweep, confetti burst, haptic tick, soft pop (Settings → Sound), daily streak, progress ring, bigger celebration when today is clear. Honors `prefers-reduced-motion`.
 - **Install**: Add to Home Screen button (Chrome `beforeinstallprompt`, a friendly Share → Add to Home Screen sheet on iOS). Hidden once installed. A home-screen long-press shortcut **Add task** opens `/?capture=1`, which opens the capture sheet immediately (also usable from an iOS Shortcut that opens that URL).
 - **Light/dark** follows the system. Safe-area insets, 16px+ inputs (no iOS zoom), big tap targets.
-- **Desktop shortcuts**: any letter / `n` / `/` capture, `?` help, arrows to move between tasks, `Space`/`x` complete, `Enter`/`e` edit, `Alt+↑↓` reorder, `Alt+←→` change day, `Del` delete.
+- **Service worker** cache version: `done-v8` (bump `VERSION` in `public/sw.js` and the `?v=` query strings in `index.html` on each release so installed home-screen apps update).
+- **Desktop shortcuts**: any letter / `n` / `/` capture, `?` help, arrows to move between tasks, `Space`/`x` complete, `Enter`/`e` edit, `Alt+↑↓` reorder, `Alt+←→` move to previous / next list, `Del` delete.
 
 ### Auto-rollover and insights
 - **Rollover:** any not-done task dated before today (America/New_York) moves to today. The server does it lazily on `GET /api/tasks` (and on any write); the client does the same at midnight/on focus. The task keeps `original_date` (first planned date) and `rollovers` (days carried); rollover is silent (no marker in the UI). Done tasks and Someday tasks never move.
-- **Analytics fields:** `planned_date` (first scheduled date; set on creation and when you explicitly move a task, never by rollover), `done_at`, `original_date`, `rollovers`. Existing tasks are backfilled with `planned_date = date` (Someday tasks stay unplanned, so they never count as missed).
+- **Analytics fields:** `planned_date` (first scheduled date; set on creation and when you explicitly move a task, never by rollover), `done_at`, `original_date`, `rollovers`. Existing tasks are backfilled with `planned_date = date` and `list = "personal"` when `list` is missing or unknown (additive, nothing is removed or moved between dates) (Someday tasks stay unplanned, so they never count as missed).
 - **On time** = `done_at`'s New York date equals `planned_date`. "Last 7 / 30 days" cover the 7 / 30 days *before today* (today is still in progress and is shown separately). **Deleted tasks are excluded** from all stats. Recurring-task instances are counted like any other task (the app has no recurrence feature yet; once instances exist as tasks they are included automatically).
 - **Insights** (bar-chart icon in the header): today's completion, on-time 7/30 days, overall completion, streak (current/best), average rollovers per task, a 14/30-day on-time bar chart and a per-weekday breakdown.
 - **API:** `curl https://done-todo-rohan-hirani.vercel.app/api/stats` returns all of it as JSON (plus a one-line `summary`).
@@ -67,11 +70,17 @@ Until a Blob store is connected the app still works fully on-device ("local only
 curl -X POST https://done-todo-rohan-hirani.vercel.app/api/tasks \
   -H "content-type: application/json" -H "x-passcode: rohan" \
   -d '{"title":"Call the dentist","date":"tomorrow"}'
+
+curl -X POST https://done-todo-rohan-hirani.vercel.app/api/tasks \
+  -H "content-type: application/json" -H "x-passcode: rohan" \
+  -d '{"title":"Send Q4 investor update","list":"ir","date":null}'
 ```
+
+`list` is optional: `personal` (default), `website`, `ir`, `social` (also accepts `"Investor Relations"`, `"Social Media"`); anything else returns `400`. `GET /api/tasks` returns `list` on every task.
 
 `date` may be omitted (= today in `APP_TZ`), `"today"`, `"tomorrow"`, `"YYYY-MM-DD"`, or `null` / `"someday"` for the Someday list. Optional: `source` (e.g. `"assistant"`). A missing/wrong passcode returns `401`. Returns `201 {"task": {...}}`.
 
-Other routes: `GET /api/tasks`, `PATCH /api/tasks?id=<uuid>` (title, date, done, position), `DELETE /api/tasks?id=<uuid>`. The app picks up remote changes within ~15 s, or immediately on focus.
+Other routes: `GET /api/tasks`, `PATCH /api/tasks?id=<uuid>` (title, list, date, done, position), `DELETE /api/tasks?id=<uuid>`. The app picks up remote changes within ~15 s, or immediately on focus.
 
 ## Develop
 

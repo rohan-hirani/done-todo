@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { authed, configured, load, mutate, cors, json, readBody, parseDate, dateOrNull, normalize, UUID } = require('./_lib');
+const { parseList, authed, configured, load, mutate, cors, json, readBody, parseDate, dateOrNull, normalize, UUID } = require('./_lib');
 
 const validIso = (v) => { const d = new Date(v); return v && !isNaN(d) ? d.toISOString() : null; };
 
@@ -22,6 +22,7 @@ function fields(b, { partial }) {
     out.position = p;
   }
   if (b.pinned !== undefined) out.pinned = !!b.pinned;
+  if (b.list !== undefined) out.list = parseList(b.list);
   if (b.planned_date !== undefined) out.planned_date = dateOrNull(b.planned_date);
   if (b.original_date !== undefined) out.original_date = dateOrNull(b.original_date);
   if (b.rollovers !== undefined) out.rollovers = Math.max(0, Math.min(10000, parseInt(b.rollovers, 10) || 0));
@@ -31,8 +32,8 @@ function fields(b, { partial }) {
 
 /**
  * GET    /api/tasks              list tasks
- * POST   /api/tasks              {title, date?, ...}  create (or upsert when "id" is given; newest updated_at wins)
- * PATCH  /api/tasks?id=<uuid>    partial update (title, date, done, position)
+ * POST   /api/tasks              {title, list?, date?, ...}  create (list: personal|website|ir|social, default personal) (or upsert when "id" is given; newest updated_at wins)
+ * PATCH  /api/tasks?id=<uuid>    partial update (title, list, date, done, position)
  * DELETE /api/tasks?id=<uuid>    delete
  * No auth: the API is open to anyone with the URL (an x-passcode header is accepted and ignored).
  */
@@ -66,7 +67,7 @@ module.exports = async (req, res) => {
         created = !old;
         delete data.deleted[tid];
         const t = {
-          id: tid, title: f.title, date: f.date, done: f.done ?? false, done_at: f.done_at ?? null,
+          id: tid, title: f.title, list: f.list || (old && old.list) || 'personal', date: f.date, done: f.done ?? false, done_at: f.done_at ?? null,
           pinned: f.pinned ?? !!(old && old.pinned),
           planned_date: f.planned_date !== undefined ? f.planned_date : old ? (f.date !== old.date ? f.date : old.planned_date ?? f.date) : f.date,
           original_date: f.original_date !== undefined ? f.original_date : old && f.date === old.date ? old.original_date ?? null : null,

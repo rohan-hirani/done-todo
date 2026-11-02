@@ -47,12 +47,23 @@ const dateOrNull = (v) => { if (v === null || v === undefined || v === '') retur
 // Lazy rollover + backfill. Not-done tasks dated before today (NY) move to today, keeping original_date (first planned date)
 // and adding the number of days carried to `rollovers`. Done and Someday (null date) tasks never move.
 // Does not touch updated_at (derived change). Returns true if anything changed.
+// Topic lists. Tasks from before lists existed (no/unknown `list`) are backfilled to "personal".
+const LISTS = ['personal', 'website', 'ir', 'social'];
+const LIST_ALIASES = { personal: 'personal', website: 'website', web: 'website', site: 'website', ir: 'ir', investor: 'ir', investors: 'ir', 'investor relations': 'ir', 'investor-relations': 'ir', investor_relations: 'ir', social: 'social', 'social media': 'social', 'social-media': 'social', social_media: 'social' };
+function parseList(v) {
+  if (v === undefined || v === null || v === '') return 'personal';
+  const k = LIST_ALIASES[String(v).trim().toLowerCase()];
+  if (!k) throw new Error('invalid list (use personal, website, ir or social)');
+  return k;
+}
+
 function normalize(data) {
   const today = dayKey(0);
   let changed = false;
   for (const t of Object.values(data.tasks)) {
     if (!('planned_date' in t)) { t.planned_date = t.date || null; changed = true; }   // backfill: first scheduled date (Someday stays unplanned)
     if (t.rollovers === undefined) { t.rollovers = 0; changed = true; }
+    if (!LISTS.includes(t.list)) { t.list = 'personal'; changed = true; }   // backfill: everything pre-lists lives in Personal
     if (!t.done && t.date && t.date < today) {
       if (!t.original_date) t.original_date = t.date;
       t.rollovers = (t.rollovers || 0) + dayDiff(t.date, today);
@@ -141,4 +152,4 @@ function readBody(req) {
   return b && typeof b === 'object' ? b : {};
 }
 
-module.exports = { passwordOk, setAuthCookie, nyDate, dayDiff, dateOrNull, normalize, authed, configured, load, mutate, cors, json, readBody, parseDate, dayKey, UUID };
+module.exports = { LISTS, parseList, passwordOk, setAuthCookie, nyDate, dayDiff, dateOrNull, normalize, authed, configured, load, mutate, cors, json, readBody, parseDate, dayKey, UUID };
