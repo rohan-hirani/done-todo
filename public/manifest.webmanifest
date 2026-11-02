@@ -48,7 +48,7 @@
     {
       "name": "Add task",
       "short_name": "Add",
-      "description": "Open quick capture",
+      "description": "Add a task to Personal",
       "url": "/?capture=1",
       "icons": [
         {
