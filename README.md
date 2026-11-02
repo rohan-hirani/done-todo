@@ -8,13 +8,14 @@ A calm to-do list organised by topic, in the spirit of TeuxDeux. Installable PWA
 - **Due dates (optional)**: a task can have a due date (shown under the title, red when due today). Rollover, streaks and Insights keep working off dates in the background.
 - **Zero-friction capture**: a floating **+** button, a **swipe up from the bottom** of the screen (mobile), or on desktop **any letter key / `n` / `/`**. The capture sheet opens with the input focused and the keyboard up. `Enter` adds and keeps the sheet open for rapid multi-add; swipe down, tap outside or `Esc` closes. Chips pick the **list** (defaults to the list you're viewing) and an optional **due date** (No date / Today / Tomorrow / a date). Natural phrases are parsed and stripped from the title: `tomorrow`, `friday`, `next week`, `this weekend`, `in 3 days`, `someday` (= no due date) (only at the start or end of the title, e.g. "Call mom by friday").
 - **Voice**: tap the big mic: the app records in-app (MediaRecorder; `audio/mp4` on iOS, webm/ogg elsewhere) with a live waveform and timer, and stops when you tap again or after ~1.5 s of silence (max ~60 s). Audio is transcribed by **Groq Whisper** when the server has a key, otherwise by **Whisper-tiny on your device**. One utterance = one task; "and then" / "also" splits it into several with a confirm preview, and dates like "tomorrow" are parsed. **Voice first** (Settings) starts recording when capture opens.
-- **Gestures**: swipe a task **right** to complete it (confetti, haptic, undo toast), **left** to reveal Top 3 / Move / Delete. Long-press (touch) or drag (mouse) to reorder or move between days. Pull down to refresh. Star up to 3 tasks as the day's **Top 3**.
+- **Gestures**: swipe a task **right** to complete it (confetti, haptic, undo toast), **left** to reveal Priority / Move / Delete. Long-press (touch) or drag (mouse) to reorder or move between lists. Pull down to refresh.
+- **High priority**: mark any number of tasks high priority (swipe left → **Priority**, `⋯` → *Mark high priority*, the `!` key on a focused task, or type a leading/trailing `!` in capture, e.g. `!Call the bank` or `Call the bank tomorrow!`; the `!` is stripped from the title). High-priority tasks show a red **!** and sort to the top of their list's open tasks. This replaced the old *Top 3* star; previously starred tasks were migrated to high priority (server-side backfill; `pinned` is kept as a read-only mirror).
 - **Carried over**: unfinished tasks from past days roll forward into Today.
 - **Dopamine**: animated checkbox, strike-through sweep, confetti burst, haptic tick, soft pop (Settings → Sound), daily streak, progress ring, bigger celebration when today is clear. Honors `prefers-reduced-motion`.
 - **Install**: Add to Home Screen button (Chrome `beforeinstallprompt`, a friendly Share → Add to Home Screen sheet on iOS). Hidden once installed. A home-screen long-press shortcut **Add task** opens `/?capture=1`, which opens the capture sheet immediately (also usable from an iOS Shortcut that opens that URL).
 - **Light/dark** follows the system. Safe-area insets, 16px+ inputs (no iOS zoom), big tap targets.
 - **Service worker** cache version: `done-v9` (bump `VERSION` in `public/sw.js` and the `?v=` query strings in `index.html` on each release so installed home-screen apps update).
-- **Desktop shortcuts**: any letter / `n` / `/` capture, `?` help, arrows to move between tasks, `Space`/`x` complete, `Enter`/`e` edit, `Alt+↑↓` reorder, `Alt+←→` move to previous / next list, `Del` delete.
+- **Desktop shortcuts**: any letter / `n` / `/` capture, `?` help, arrows to move between tasks, `Space`/`x` complete, `!` toggle high priority, `Enter`/`e` edit, `Alt+↑↓` reorder, `Alt+←→` move to previous / next list, `Del` delete.
 
 ### Auto-rollover and insights
 - **Rollover:** any not-done task dated before today (America/New_York) moves to today. The server does it lazily on `GET /api/tasks` (and on any write); the client does the same at midnight/on focus. The task keeps `original_date` (first planned date) and `rollovers` (days carried); rollover is silent (no marker in the UI). Done tasks and Someday tasks never move.
@@ -84,7 +85,9 @@ List settings: `GET /api/lists` → `{lists}`; `PATCH /api/lists?id=<id or name>
 
 `date` may be omitted (= today in `APP_TZ`), `"today"`, `"tomorrow"`, `"YYYY-MM-DD"`, or `null` / `"someday"` for the Someday list. Optional: `source` (e.g. `"assistant"`). A missing/wrong passcode returns `401`. Returns `201 {"task": {...}}`.
 
-Other routes: `GET /api/tasks`, `PATCH /api/tasks?id=<uuid>` (title, list, date, done, position), `DELETE /api/tasks?id=<uuid>`. The app picks up remote changes within ~15 s, or immediately on focus.
+`priority` is optional: `"high"` or `"normal"` (default), or a boolean (`"priority": true`, or `"high": true`). `GET` returns `priority` on every task.
+
+Other routes: `GET /api/tasks`, `PATCH /api/tasks?id=<uuid>` (title, list, date, done, position, priority), `DELETE /api/tasks?id=<uuid>`. The app picks up remote changes within ~15 s, or immediately on focus.
 
 ## Develop
 

@@ -80,6 +80,16 @@ function parseList(v, lists = DEFAULT_LISTS) {
   throw new Error('invalid list (use an id: personal, website, ir, social, or a list name: ' + lists.map((l) => l.name).join(', ') + ')');
 }
 
+// Priority: "high" | "normal". Accepts "high"/"normal"/"low"/"none", true/false, "!" and null. Replaces the old Top-3 `pinned` star.
+function parsePriority(v) {
+  if (v === true) return 'high';
+  if (v === false || v === null || v === undefined) return 'normal';
+  const k = String(v).trim().toLowerCase();
+  if (['high', '!', 'urgent', 'true', '1', 'yes'].includes(k)) return 'high';
+  if (['normal', 'none', 'low', '', 'false', '0', 'no'].includes(k)) return 'normal';
+  throw new Error('invalid priority (use "high" or "normal", or true/false)');
+}
+
 function normalize(data) {
   const today = dayKey(0);
   let changed = false;
@@ -89,6 +99,8 @@ function normalize(data) {
     if (!('planned_date' in t)) { t.planned_date = t.date || null; changed = true; }   // backfill: first scheduled date (Someday stays unplanned)
     if (t.rollovers === undefined) { t.rollovers = 0; changed = true; }
     if (!LISTS.includes(t.list)) { t.list = 'personal'; changed = true; }   // backfill: everything pre-lists lives in Personal
+    if (t.priority !== 'high' && t.priority !== 'normal') { t.priority = t.pinned ? 'high' : 'normal'; changed = true; }   // migrate Top-3 stars to high priority
+    if (t.pinned !== (t.priority === 'high')) { t.pinned = t.priority === 'high'; changed = true; }   // keep legacy mirror in sync
     if (!t.done && t.date && t.date < today) {
       if (!t.original_date) t.original_date = t.date;
       t.rollovers = (t.rollovers || 0) + dayDiff(t.date, today);
@@ -177,4 +189,4 @@ function readBody(req) {
   return b && typeof b === 'object' ? b : {};
 }
 
-module.exports = { LISTS, DEFAULT_LISTS, HEX, cleanName, listSettings, parseList, passwordOk, setAuthCookie, nyDate, dayDiff, dateOrNull, normalize, authed, configured, load, mutate, cors, json, readBody, parseDate, dayKey, UUID };
+module.exports = { parsePriority, LISTS, DEFAULT_LISTS, HEX, cleanName, listSettings, parseList, passwordOk, setAuthCookie, nyDate, dayDiff, dateOrNull, normalize, authed, configured, load, mutate, cors, json, readBody, parseDate, dayKey, UUID };
