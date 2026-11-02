@@ -27,6 +27,18 @@ function persist() {
 }
 const buzz = (p) => { if (S.haptics && navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate(p); };
 
+/* ───────────── topic lists ───────────── */
+const LISTS = [
+  { id: 'personal', name: 'Personal', short: 'Personal' },
+  { id: 'website', name: 'Website', short: 'Website' },
+  { id: 'ir', name: 'Investor Relations', short: 'IR' },
+  { id: 'social', name: 'Social Media', short: 'Social' },
+];
+const LIST_IDS = LISTS.map((l) => l.id);
+const listOf = (t) => (LIST_IDS.includes(t.list) ? t.list : 'personal');   // tasks from before lists existed live in Personal
+const listName = (id) => (LISTS.find((l) => l.id === id) || LISTS[0]).name;
+const listShort = (id) => (LISTS.find((l) => l.id === id) || LISTS[0]).short;
+
 /* ───────────── dates ───────────── */
 const pad = (n) => String(n).padStart(2, '0');
 const keyOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -42,6 +54,7 @@ function dayName(k) {
   if (k === addDays(t, -1)) return 'Yesterday';
   return fmt(k, { weekday: 'long' });
 }
+const dueLabel = (k) => (!k ? '' : k < todayKey() ? 'Overdue' : whenLabel(k));
 const whenLabel = (k) => (k === null ? 'Someday' : k === todayKey() ? 'Today' : k === addDays(todayKey(), 1) ? 'Tomorrow' : fmt(k, { weekday: 'short', month: 'short', day: 'numeric' }));
 
 /* ───────────── data ops ───────────── */
@@ -55,10 +68,10 @@ function put(task) {
   S.queue.push({ t: 'put', task: { ...task } });
   persist(); render(); scheduleFlush();
 }
-function addTask(title, date) {
+function addTask(title, date, list = 'personal') {
   title = title.trim();
   if (!title) return null;
-  const t = { id: uid(), title, date, planned_date: date, original_date: null, rollovers: 0, done: false, done_at: null, pinned: false, position: Date.now(), created_at: nowIso(), updated_at: nowIso(), source: 'app' };
+  const t = { id: uid(), title, list: LIST_IDS.includes(list) ? list : 'personal', date, planned_date: date, original_date: null, rollovers: 0, done: false, done_at: null, pinned: false, position: Date.now(), created_at: nowIso(), updated_at: nowIso(), source: 'app' };
   put(t);
   return t;
 }
@@ -88,17 +101,6 @@ function rollLocal() {
 }
 
 /* ───────────── derived ───────────── */
-function dayList(key) {
-  const today = todayKey();
-  const all = Object.values(S.tasks);
-  let list;
-  if (key === 'someday') list = all.filter((t) => !t.date).sort((a, b) => a.position - b.position);
-  else if (key === today) {
-    list = all.filter((t) => t.date === today || (t.date && t.date < today && (!t.done || doneKey(t) === today)))
-      .sort((a, b) => ((a.date < today ? 0 : 1) - (b.date < today ? 0 : 1)) || (a.date < today && b.date < today ? a.date.localeCompare(b.date) : 0) || a.position - b.position);
-  } else list = all.filter((t) => t.date === key).sort((a, b) => a.position - b.position);
-  return list.sort((a, b) => (b.pinned && !b.done ? 1 : 0) - (a.pinned && !a.done ? 1 : 0));   // starred first (stable)
-}
 function streak() {
   const days = new Set(Object.values(S.tasks).filter((t) => t.done && t.done_at).map(doneKey));
   let k = todayKey(), n = 0;
@@ -106,13 +108,24 @@ function streak() {
   while (days.has(k)) { n++; k = addDays(k, -1); }
   return n;
 }
-const dayKeys = () => Array.from({ length: S.days }, (_, i) => addDays(todayKey(), i));
+// Active tasks of a topic list. A task you just completed lingers for the undo window, then moves to the archive.
+const linger = new Set();
+function activeList(key) {
+  return Object.values(S.tasks).filter((t) => listOf(t) === key && (!t.done || linger.has(t.id)))
+    .sort((a, b) => ((b.pinned && !b.done ? 1 : 0) - (a.pinned && !a.done ? 1 : 0)) || a.position - b.position);
+}
+// Archive of a topic list: completed tasks, newest first. Nothing is ever auto-deleted.
+const archiveOf = (key) => Object.values(S.tasks).filter((t) => listOf(t) === key && t.done && !linger.has(t.id))
+  .sort((a, b) => (b.done_at || '').localeCompare(a.done_at || '') || (b.updated_at || '').localeCompare(a.updated_at || ''));
+// Today's progress (header ring): what's due today or earlier, plus everything finished today.
+const todaySet = () => { const k = todayKey(); return Object.values(S.tasks).filter((t) => (t.done ? doneKey(t) === k : t.date && t.date <= k)); };
+const archOpen = new Set();
 
 /* ───────────── rendering ───────────── */
 const board = $('#board');
 const strip = $('#strip');
 let builtFor = '';
-let activeKey = 'today';
+let activeKey = 'personal';
 
 const ICON_MORE = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg>';
 const ICON_CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle class="box" cx="12" cy="12" r="10"/><circle class="fill" cx="12" cy="12" r="10.8"/><path class="tick" d="M7 12.5l3.4 3.4L17 8.8"/></svg>';
@@ -122,44 +135,37 @@ const I_TRASH = '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2m-6 0l1 12h
 const I_OK = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 function buildBoard() {
-  const sig = todayKey() + '|' + S.days;
-  if (sig === builtFor) return;
-  builtFor = sig;
+  if (builtFor === 'lists') return;
+  builtFor = 'lists';
   board.textContent = '';
   strip.textContent = '';
-  const cols = [...dayKeys().map((k, i) => ({ id: k, date: k, today: i === 0 })), { id: 'someday', date: null }];
-  cols.forEach((c, idx) => {
-    const name = c.date === null ? 'Someday' : dayName(c.date);
-    const sub = c.date === null ? 'No date' : fmt(c.date, { weekday: 'short', month: 'short', day: 'numeric' });
+  LISTS.forEach((c) => {
     const sec = document.createElement('section');
-    sec.className = 'day' + (c.today ? ' today' : '') + (c.date === null ? ' someday' : '');
+    sec.className = 'day list-col';
     sec.dataset.key = c.id;
-    sec.dataset.date = c.date || '';
-    sec.setAttribute('aria-label', name);
-    sec.innerHTML = `<header><h2>${name}</h2><span class="sub">${sub}</span></header>
-      ${c.today ? `<div class="hero"><div class="hero-ring"><svg viewBox="0 0 44 44" aria-hidden="true"><circle class="bg" cx="22" cy="22" r="18"/><circle class="fg" cx="22" cy="22" r="18" pathLength="100"/></svg><span class="hero-num">0/0</span></div><p class="hero-cap"></p></div>` : ''}
-      <form class="add" autocomplete="off"><span class="plus" aria-hidden="true">+</span><input type="text" enterkeyhint="done" placeholder="${c.today ? 'Add a task for today' : 'Add a task'}" aria-label="Add task to ${name}" maxlength="500"></form>
-      <ul class="list" role="list"></ul>
-      <p class="empty">${c.today ? 'A clear day. Add something, or enjoy it.' : c.date === null ? 'Park ideas here for later.' : 'Nothing planned.'}</p>`;
+    sec.setAttribute('aria-label', c.name);
+    sec.innerHTML = `<header><h2>${c.name}</h2><span class="sub"></span></header>
+      <form class="add" autocomplete="off"><span class="plus" aria-hidden="true">+</span><input type="text" enterkeyhint="done" placeholder="Add to ${c.name}" aria-label="Add task to ${c.name}" maxlength="500"></form>
+      <div class="scroll">
+        <ul class="list" role="list"></ul>
+        <p class="empty">Nothing open here. Add something.</p>
+        <div class="arch" hidden>
+          <button type="button" class="arch-btn" aria-expanded="false"></button>
+          <ul class="arch-list" role="list" aria-label="${c.name} archive" hidden></ul>
+        </div>
+      </div>`;
     board.appendChild(sec);
     const chip = document.createElement('button');
-    chip.className = 'chip' + (c.today ? ' today' : '');
+    chip.className = 'chip';
     chip.dataset.key = c.id;
-    chip.innerHTML = `${c.today ? 'Today' : c.date === null ? 'Someday' : idx === 1 ? 'Tomorrow' : fmt(c.date, { weekday: 'short', day: 'numeric' })}<small></small>`;
+    chip.innerHTML = `${c.short}<small></small>`;
     chip.addEventListener('click', () => scrollToKey(c.id));
     strip.appendChild(chip);
-    if (idx === S.days - 1) {
-      const more = document.createElement('button');
-      more.className = 'more-days';
-      more.textContent = '+ 7 more days';
-      more.addEventListener('click', () => { S.days += 7; persist(); render(); });
-      board.appendChild(more);
-    }
   });
   observeActive();
 }
 
-const taskSig = (t, key) => [t.title, t.done, t.date, t.pinned].join('\u0001');
+const taskSig = (t, key) => [t.title, t.done, t.date, t.pinned, todayKey()].join('\u0001');
 function makeLi(t) {
   const li = document.createElement('li');
   li.className = 'task';
@@ -168,7 +174,7 @@ function makeLi(t) {
     <div class="swipe-actions"><button class="act-star" aria-label="Star as top 3">${I_STAR}<span>Top 3</span></button><button class="act-move" aria-label="Move">${I_MOVE}<span>Move</span></button><button class="act-del" aria-label="Delete">${I_TRASH}<span>Delete</span></button></div>
     <div class="task-in">
       <button class="check" role="checkbox" aria-checked="false" aria-label="Complete task">${ICON_CHECK}</button>
-      <div class="body"><span><span class="star" aria-label="Top 3">★</span><span class="title" tabindex="0" role="button" aria-label="Edit task"></span></span></div>
+      <div class="body"><span><span class="star" aria-label="Top 3">★</span><span class="title" tabindex="0" role="button" aria-label="Edit task"></span></span><span class="due" hidden></span></div>
       <button class="more" aria-haspopup="menu" aria-label="Move or delete task">${ICON_MORE}</button>
     </div>`;
   return li;
@@ -182,6 +188,9 @@ function updateLi(li, t, key) {
   li.dataset.sig = sig;
   if (!li.classList.contains('editing')) $('.title', li).textContent = t.title;
   $('.act-star span', li).textContent = t.pinned ? 'Unstar' : 'Top 3';
+  const due = $('.due', li), lbl = t.done ? '' : dueLabel(t.date);
+  due.hidden = !lbl; due.textContent = lbl ? `Due ${lbl === 'Overdue' ? 'earlier' : lbl}` : '';
+  due.classList.toggle('soon', !!t.date && t.date <= todayKey());
 }
 
 function render() {
@@ -192,10 +201,9 @@ function render() {
   const today = todayKey();
   // FLIP: remember where rows were so reorders glide instead of jump
   const before = new Map($$('.task', board).map((li) => [li.dataset.id, { top: li.getBoundingClientRect().top, col: li.closest('.day')?.dataset.key }]));
-  let doneN = 0, totalN = 0;
   for (const sec of $$('.day', board)) {
     const key = sec.dataset.key;
-    const list = dayList(key);
+    const list = activeList(key);
     const ul = $('.list', sec);
     const existing = new Map($$(':scope > .task', ul).map((li) => [li.dataset.id, li]));
     let prev = null;
@@ -207,11 +215,18 @@ function render() {
       if (li !== want && !li.classList.contains('dragging')) ul.insertBefore(li, want);
       prev = li.classList.contains('dragging') ? prev : li;
     }
-    for (const li of existing.values()) if (!li.classList.contains('dragging')) li.remove();
-    if (key === today) { totalN = list.length; doneN = list.filter((t) => t.done).length; }
+    for (const li of existing.values()) {
+      if (li.classList.contains('dragging')) continue;
+      if (!reduceMotion.matches && S.tasks[li.dataset.id]?.done && !li.classList.contains('removing')) { li.classList.add('removing'); setTimeout(() => li.remove(), 260); }
+      else if (!li.classList.contains('removing')) li.remove();
+    }
+    const open = list.filter((t) => !t.done).length;
+    $('.sub', sec).textContent = open ? `${open} open` : '';
     const chip = $(`.chip[data-key="${key}"] small`, strip);
-    if (chip) { const open = list.filter((t) => !t.done).length; chip.textContent = open || ''; }
+    if (chip) chip.textContent = open || '';
+    renderArchive(sec, key);
   }
+  const ts = todaySet(), totalN = ts.length, doneN = ts.filter((t) => t.done).length;
   if (!reduceMotion.matches) {
     for (const li of $$('.task', board)) {
       const b = before.get(li.dataset.id);
@@ -222,6 +237,46 @@ function render() {
   }
   renderStats(doneN, totalN);
   renderSync();
+}
+
+const archDate = (t) => {
+  if (!t.done_at) return '';
+  const d = new Date(t.done_at), k = keyOf(d), today = todayKey();
+  const day = k === today ? 'Today' : k === addDays(today, -1) ? 'Yesterday' : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', ...(k.slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' } : {}) });
+  return `${day} · ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+};
+function renderArchive(sec, key) {
+  const box = $('.arch', sec), btn = $('.arch-btn', box), ul = $('.arch-list', box);
+  const done = archiveOf(key), open = archOpen.has(key) && done.length > 0;
+  box.hidden = !done.length;
+  btn.textContent = open ? `Hide archive (${done.length})` : `View archive (${done.length})`;
+  btn.setAttribute('aria-expanded', String(open));
+  ul.hidden = !open;
+  if (!open) { if (ul.firstChild) ul.textContent = ''; return; }
+  const sig = done.map((t) => t.id + t.done_at + t.title).join('|');
+  if (ul.dataset.sig === sig) return;
+  ul.dataset.sig = sig;
+  ul.textContent = '';
+  for (const t of done) {
+    const li = document.createElement('li');
+    li.className = 'arch-item'; li.dataset.id = t.id;
+    li.innerHTML = `<button class="check" role="checkbox" aria-checked="true">${ICON_CHECK}</button><div class="arch-body"><span class="title"></span><time></time></div>`;
+    $('.check', li).setAttribute('aria-label', `Restore “${t.title}” to ${listName(key)}`);
+    $('.title', li).textContent = t.title;
+    $('time', li).textContent = archDate(t); if (t.done_at) $('time', li).dateTime = t.done_at;
+    ul.appendChild(li);
+  }
+}
+function restoreTask(id, li) {
+  const t = S.tasks[id];
+  if (!t || !t.done) return;
+  const prev = t.done_at;
+  const go = () => {
+    toggle(id, null, { quiet: true });   // same path as unchecking on the board: optimistic put + sync queue
+    buzz(8);
+    toast(`Restored to ${listName(listOf(t))}`, { action: 'Undo', onAction: () => { const cur = S.tasks[id]; if (cur) put({ ...cur, done: true, done_at: prev }); }, ms: 4000 });
+  };
+  if (li && !reduceMotion.matches) { li.classList.add('leaving'); setTimeout(go, 260); } else go();
 }
 
 let lastAllDone = null;
@@ -255,6 +310,7 @@ function toggle(id, origin, { quiet = false, undoable = true } = {}) {
   if (!t) return;
   const wasFull = isTodayFull();
   const done = !t.done;
+  if (done) { linger.add(id); setTimeout(() => { if (linger.delete(id)) render(); }, 3400); } else linger.delete(id);
   put({ ...t, done, done_at: done ? nowIso() : null });
   if (!done) return;
   if (quiet) return;
@@ -268,7 +324,7 @@ function toggle(id, origin, { quiet = false, undoable = true } = {}) {
   if (!wasFull && isTodayFull()) setTimeout(allDone, 250);
   else if (undoable) toast('Completed', { action: 'Undo', onAction: () => toggle(id, null, { quiet: true }), ms: 3200 });
 }
-const isTodayFull = () => { const l = dayList(todayKey()); return l.length > 0 && l.every((t) => t.done); };
+const isTodayFull = () => { const l = todaySet(); return l.length > 0 && l.every((t) => t.done); };
 function allDone() {
   celebrate();
   sfx.fanfare(S.muted);
@@ -279,8 +335,8 @@ function allDone() {
 function togglePin(id) {
   const t = S.tasks[id]; if (!t) return;
   if (!t.pinned) {
-    const key = t.date === null ? 'someday' : t.date < todayKey() ? todayKey() : t.date;
-    if (dayList(key).filter((x) => x.pinned && !x.done).length >= 3) return toast('Top 3 is full. Unstar one first.', { ms: 2200 });
+    const key = listOf(t);
+    if (activeList(key).filter((x) => x.pinned && !x.done).length >= 3) return toast('Top 3 is full. Unstar one first.', { ms: 2200 });
   }
   put({ ...t, pinned: !t.pinned });
   buzz(8);
@@ -328,6 +384,8 @@ const menu = $('#menu'), menuBack = $('#menuBackdrop');
 let menuId = null, menuReturn = null;
 function openMenu(id, anchor) {
   menuId = id; menuReturn = anchor;
+  const t0 = S.tasks[id];
+  $$('[data-act^="list:"]', menu).forEach((b) => { b.hidden = !!t0 && b.dataset.act === 'list:' + listOf(t0); });
   menu.hidden = false; menuBack.hidden = false;
   if (!isMobile()) {
     const r = anchor.getBoundingClientRect();
@@ -350,6 +408,12 @@ function moveTo(id, date) {
   const t = S.tasks[id];
   if (t) put({ ...t, date, ...(date !== t.date ? { planned_date: date, original_date: null } : {}), position: Date.now() });
 }
+function moveToList(id, list) {
+  const t = S.tasks[id];
+  if (!t || listOf(t) === list) return;
+  put({ ...t, list, position: Date.now() });
+  toast('Moved to ' + listName(list), { action: 'Undo', onAction: () => { const cur = S.tasks[id]; if (cur) put({ ...cur, list: listOf(t), position: t.position }); }, ms: 3200 });
+}
 function deleteWithUndo(id) {
   const li = $(`.task[data-id="${id}"]`);
   const next = li && (li.nextElementSibling || li.previousElementSibling);
@@ -367,10 +431,11 @@ menu.addEventListener('click', (e) => {
   if (a === 'today') moveTo(id, todayKey());
   else if (a === 'tomorrow') moveTo(id, addDays(todayKey(), 1));
   else if (a === 'someday') moveTo(id, null);
+  else if (a.startsWith('list:')) moveToList(id, a.slice(5));
   else if (a === 'pin') togglePin(id);
   else if (a === 'delete') deleteWithUndo(id);
 });
-$('#menuDate').addEventListener('change', (e) => { if (menuId && e.target.value) { const id = menuId; closeMenu(false); closeSwipe(); moveTo(id, e.target.value); toast('Moved to ' + whenLabel(e.target.value)); } });
+$('#menuDate').addEventListener('change', (e) => { if (menuId && e.target.value) { const id = menuId; closeMenu(false); closeSwipe(); moveTo(id, e.target.value); toast('Due ' + whenLabel(e.target.value)); } });
 menuBack.addEventListener('click', () => closeMenu());
 menu.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { e.stopPropagation(); closeMenu(); }
@@ -384,6 +449,10 @@ menu.addEventListener('keydown', (e) => {
 /* ───────────── board events ───────────── */
 board.addEventListener('click', (e) => {
   if (drag.moved) return;
+  const ab = e.target.closest('.arch-btn');
+  if (ab) { const key = ab.closest('.day').dataset.key; archOpen.has(key) ? archOpen.delete(key) : archOpen.add(key); render(); if (archOpen.has(key)) ab.nextElementSibling.scrollIntoView({ block: 'nearest', behavior: reduceMotion.matches ? 'auto' : 'smooth' }); return; }
+  const ai = e.target.closest('.arch-item');
+  if (ai) { if (e.target.closest('.check') && !ai.classList.contains('leaving')) restoreTask(ai.dataset.id, ai); return; }
   const li = e.target.closest('.task');
   if (!li) return;
   const id = li.dataset.id;
@@ -398,9 +467,9 @@ board.addEventListener('click', (e) => {
 board.addEventListener('submit', (e) => {
   e.preventDefault();
   const form = e.target.closest('.add'); if (!form) return;
-  const inp = $('input', form), key = form.closest('.day').dataset.date || null;
+  const inp = $('input', form), list = form.closest('.day').dataset.key;
   const p = parseWhen(inp.value, new Date());
-  if (addTask(p.date !== undefined ? p.title : inp.value, p.date !== undefined ? p.date : key)) { inp.value = ''; $('.list', form.closest('.day')).scrollTop = 0; }
+  if (addTask(p.date !== undefined ? p.title : inp.value, p.date !== undefined ? p.date : null, list)) { inp.value = ''; }
   inp.focus();
 });
 board.addEventListener('keydown', (e) => {
@@ -420,10 +489,9 @@ board.addEventListener('keydown', (e) => {
     requestAnimationFrame(() => focusTitle($(`.task[data-id="${id}"]`)));
   } else if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
     e.preventDefault();
-    const t = S.tasks[id], keys = [...dayKeys(), null];
-    let cur = keys.indexOf(t.date); if (cur < 0) cur = t.date && t.date < todayKey() ? 0 : keys.length - 1;
-    const nxt = keys[Math.max(0, Math.min(keys.length - 1, cur + (e.key === 'ArrowRight' ? 1 : -1)))];
-    if (nxt !== t.date) { moveTo(id, nxt); requestAnimationFrame(() => focusTitle($(`.task[data-id="${id}"]`))); }
+    const t = S.tasks[id], cur = LIST_IDS.indexOf(listOf(t));
+    const nxt = LIST_IDS[Math.max(0, Math.min(LIST_IDS.length - 1, cur + (e.key === 'ArrowRight' ? 1 : -1)))];
+    if (nxt !== listOf(t)) { moveToList(id, nxt); requestAnimationFrame(() => focusTitle($(`.task[data-id="${id}"]`))); }
   } else if (e.key === 'ArrowDown') { e.preventDefault(); focusTitle(list[i + 1]); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); focusTitle(list[i - 1]); }
   else if (e.target.matches('.title') && (e.key === 'Enter' || e.key === 'e')) { e.preventDefault(); startEdit(li); }
@@ -535,7 +603,7 @@ function autoScroll() {
   if (!document.body.classList.contains('view-overview') || !isMobile()) { if (x < edge) board.scrollLeft -= 14; else if (x > innerWidth - edge) board.scrollLeft += 14; }
   if (isMobile() && document.body.classList.contains('view-overview')) { if (y < 140) board.scrollTop -= 12; else if (y > innerHeight - 120) board.scrollTop += 12; }
   const sec = document.elementFromPoint(x, y)?.closest('.day');
-  if (sec) { const ul = $('.list', sec), r = ul.getBoundingClientRect(); if (y < r.top + 40) ul.scrollTop -= 10; else if (y > r.bottom - 40) ul.scrollTop += 10; }
+  if (sec) { const ul = $('.scroll', sec), r = ul.getBoundingClientRect(); if (y < r.top + 40) ul.scrollTop -= 10; else if (y > r.bottom - 40) ul.scrollTop += 10; }
   dragMove();
   drag.raf = requestAnimationFrame(autoScroll);
 }
@@ -552,10 +620,7 @@ function endDrag() {
     if (t && sec) {
       const pp = prev ? S.tasks[prev.dataset.id].position : null, np = next ? S.tasks[next.dataset.id].position : null;
       const pos = pp == null && np == null ? Date.now() : pp == null ? np - 1000 : np == null ? Math.max(pp + 1000, Date.now()) : (pp + np) / 2;
-      const todayCol = sec.dataset.key === todayKey();
-      const date = todayCol && t.date && t.date < todayKey() ? todayKey() : (sec.dataset.date || null);
-      const nd = todayCol && t.date && t.date <= todayKey() ? (t.date < todayKey() ? todayKey() : t.date) : date;
-      put({ ...t, date: nd, ...(nd !== t.date ? { planned_date: nd, original_date: null } : {}), position: pos });
+      put({ ...t, list: sec.dataset.key, position: pos });
     }
   }
   $$('.day.over').forEach((s) => s.classList.remove('over'));
@@ -598,9 +663,15 @@ function onScroll() {
 }
 
 /* ───────────── capture sheet ───────────── */
-const cap = { open: false, chip: 'today', custom: '' };
+const cap = { open: false, chip: 'none', custom: '', list: 'personal' };
 const capEl = $('#capture'), cIn = $('#cInput'), cWhen = $('#cWhen'), cHint = $('#cHint'), cLog = $('#cLog'), cPrev = $('#cPreview');
-const chipDate = () => (cap.chip === 'today' ? todayKey() : cap.chip === 'tomorrow' ? addDays(todayKey(), 1) : cap.chip === 'someday' ? null : cap.custom);
+const chipDate = () => (cap.chip === 'today' ? todayKey() : cap.chip === 'tomorrow' ? addDays(todayKey(), 1) : cap.chip === 'date' ? cap.custom : null);
+function setList(v) {
+  cap.list = LIST_IDS.includes(v) ? v : 'personal';
+  $$('#capLists .cchip').forEach((c) => c.setAttribute('aria-checked', String(c.dataset.list === cap.list)));
+  updateWhen();
+}
+const capLabel = (date) => listShort(cap.list) + (date ? ' · due ' + whenLabel(date) : '');
 function setChip(v) {
   cap.chip = v;
   $$('#capChips .cchip[data-v]').forEach((c) => c.setAttribute('aria-checked', String(c.dataset.v === v)));
@@ -610,7 +681,7 @@ function setChip(v) {
 }
 function updateWhen() {
   const p = parseWhen(cIn.value, new Date());
-  cWhen.textContent = p.date !== undefined ? `→ ${whenLabel(p.date)}` : cIn.value.trim() ? `→ ${whenLabel(chipDate())}` : '';
+  cWhen.textContent = cIn.value.trim() ? `→ ${listName(cap.list)}${(p.date !== undefined ? p.date : chipDate()) ? ' · due ' + whenLabel(p.date !== undefined ? p.date : chipDate()) : ''}` : '';
 }
 function positionSheet() {
   const vv = window.visualViewport;
@@ -627,7 +698,8 @@ function openCapture({ prefill = '', voice = true } = {}) {
   document.body.classList.add('capturing');
   cIn.value = prefill;
   cPrev.hidden = true; cLog.textContent = ''; setVoice('idle', '');
-  setChip('today');
+  setChip('none');
+  setList(LIST_IDS.includes(activeKey) ? activeKey : 'personal');
   cIn.focus({ preventScroll: true });          // inside the user gesture so iOS raises the keyboard
   positionSheet();
   buzz(8);
@@ -647,7 +719,7 @@ function closeCapture() {
 function logAdded(title, date) {
   const li = document.createElement('li');
   li.innerHTML = `${I_OK}<span></span><em></em>`;
-  $('span', li).textContent = title; $('em', li).textContent = whenLabel(date);
+  $('span', li).textContent = title; $('em', li).textContent = capLabel(date);
   cLog.prepend(li);
   [...cLog.children].forEach((c, i) => { c.classList.toggle('old', i > 0); if (i > 2) c.remove(); });
   capEl.classList.remove('pulse'); void capEl.offsetWidth; capEl.classList.add('pulse');
@@ -657,7 +729,7 @@ function addFromText(text, { keepFocus = true } = {}) {
   const title = p.title.trim();
   if (!title) return false;
   const date = p.date !== undefined ? p.date : chipDate();
-  addTask(title, date);
+  addTask(title, date, cap.list);
   logAdded(title, date);
   buzz(12);
   sfx.pop(S.muted);
@@ -670,6 +742,7 @@ cIn.addEventListener('keydown', (e) => {
   else if (e.key === 'Escape') { e.stopPropagation(); closeCapture(); }
 });
 $('#capForm').addEventListener('submit', (e) => e.preventDefault());
+$('#capLists').addEventListener('click', (e) => { const b = e.target.closest('.cchip[data-list]'); if (b) { setList(b.dataset.list); cIn.focus({ preventScroll: true }); buzz(5); } });
 $('#capChips').addEventListener('click', (e) => { const b = e.target.closest('.cchip[data-v]'); if (b) { setChip(b.dataset.v); cIn.focus({ preventScroll: true }); buzz(5); } });
 $('#cDate').addEventListener('change', (e) => { if (e.target.value) { cap.custom = e.target.value; setChip('date'); cIn.focus({ preventScroll: true }); } });
 $('#fab').addEventListener('click', () => openCapture());
@@ -778,7 +851,7 @@ function handleVoiceText(text) {
   if (parts.length > 1) {
     pvParts = parts;
     const ul = $('ul', cPrev); ul.textContent = '';
-    parts.forEach((p) => { const li = document.createElement('li'); const w = parseWhen(p, new Date()); li.textContent = w.title; const s = document.createElement('small'); s.textContent = whenLabel(w.date !== undefined ? w.date : chipDate()); li.append(s); ul.append(li); });
+    parts.forEach((p) => { const li = document.createElement('li'); const w = parseWhen(p, new Date()); li.textContent = w.title; const s = document.createElement('small'); s.textContent = capLabel(w.date !== undefined ? w.date : chipDate()); li.append(s); ul.append(li); });
     $('#pvAdd').textContent = `Add ${parts.length} tasks`;
     cPrev.hidden = false;
   } else if (addFromText(text, { keepFocus: false })) {
@@ -801,7 +874,7 @@ $('#micBtn').addEventListener('click', () => startVoice());
     const el = e.target;
     if (el.closest('dialog,.menu,.capture,input,.swipe-actions,.fab')) return;
     const t = e.touches[0];
-    const list = el.closest('.list');
+    const list = el.closest('.scroll');
     const atEnd = !list || list.scrollHeight - list.scrollTop - list.clientHeight < 3;
     const roomy = !list || list.scrollHeight <= list.clientHeight + 2;
     g = { x: t.clientX, y: t.clientY, axis: null, up: atEnd && (t.clientY > innerHeight * 0.7 || roomy), down: (!list || list.scrollTop <= 0) && (board.scrollTop <= 0), pull: 0 };
@@ -883,8 +956,8 @@ $('#insBody').addEventListener('click', (e) => { const b = e.target.closest('[da
 /* ───────────── settings / view ───────────── */
 const I_FOCUS = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.9"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
 const I_LIST = '<svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h14" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>';
-function renderView() { $('#viewBtn').innerHTML = S.view === 'focus' ? I_LIST : I_FOCUS; $('#viewBtn').title = S.view === 'focus' ? 'Show all days' : 'Focus on today'; $('#viewBtn').setAttribute('aria-label', $('#viewBtn').title); document.body.classList.toggle('view-focus', S.view === 'focus'); document.body.classList.toggle('view-overview', S.view !== 'focus'); }
-$('#viewBtn').addEventListener('click', () => { S.view = S.view === 'focus' ? 'overview' : 'focus'; persist(); renderView(); render(); board.scrollTo({ left: 0, top: 0 }); setActive(todayKey()); toast(S.view === 'focus' ? 'Focus view' : 'All days', { ms: 1200 }); });
+function renderView() { $('#viewBtn').innerHTML = S.view === 'focus' ? I_LIST : I_FOCUS; $('#viewBtn').title = S.view === 'focus' ? 'Show all lists' : 'One list at a time'; $('#viewBtn').setAttribute('aria-label', $('#viewBtn').title); document.body.classList.toggle('view-focus', S.view === 'focus'); document.body.classList.toggle('view-overview', S.view !== 'focus'); }
+$('#viewBtn').addEventListener('click', () => { S.view = S.view === 'focus' ? 'overview' : 'focus'; persist(); renderView(); render(); board.scrollTo({ left: 0, top: 0 }); setActive(LIST_IDS[0]); toast(S.view === 'focus' ? 'One list at a time' : 'All lists', { ms: 1200 }); });
 const setDlg = $('#settings');
 function openSettings() { $('#setSound').checked = !S.muted; $('#setHaptics').checked = S.haptics; $('#setVoice').checked = S.voiceFirst; setDlg.showModal(); }
 $('#settingsBtn').addEventListener('click', openSettings);
@@ -968,7 +1041,8 @@ setInterval(() => { if (!document.hidden) sync(); }, 15000);
 addEventListener('focus', sync);
 addEventListener('online', sync);
 addEventListener('offline', () => setMode('offline'));
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { sync(); if (builtFor.split('|')[0] !== todayKey()) render(); } });
+let renderedDay = todayKey();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { sync(); if (renderedDay !== todayKey()) { renderedDay = todayKey(); render(); } } });
 
 $('#syncBtn').addEventListener('click', () => { sync(); toast(S.mode === 'offline' ? 'Offline. Will save when you’re back.' : 'Refreshed', { ms: 1200 }); });
 
@@ -997,6 +1071,6 @@ render();
     setTimeout(() => openCapture(), 80);
   }
 })();
-setInterval(() => { if (builtFor.split('|')[0] !== todayKey()) render(); }, 60000);
+setInterval(() => { if (renderedDay !== todayKey()) { renderedDay = todayKey(); render(); } }, 60000);
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 window.__done = { S, render, openCapture };

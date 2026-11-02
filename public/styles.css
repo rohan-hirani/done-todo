@@ -340,3 +340,43 @@ body.capturing .cap-backdrop{opacity:1;pointer-events:auto}
 @keyframes gshake{25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
 html.needs-auth body>:not(#gate):not(script){visibility:hidden}
 html.needs-auth #gate{display:flex}
+
+/* v8: topic lists + per-list archive */
+.menu [hidden]{display:none}
+.task:not(.open):not(.swiping) .swipe-actions{visibility:hidden}
+.menu-cap{margin:4px 12px 2px;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.day[data-key=personal] h2{color:var(--red)}
+.day[data-key=website] h2{color:var(--blue)}
+.day[data-key=ir] h2{color:var(--ok)}
+.day[data-key=social] h2{color:#a855f7}
+.day>header{flex-wrap:wrap}
+.scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent;display:flex;flex-direction:column}
+.scroll .list{flex:none;overflow:visible}
+.due{font-size:12.5px;font-weight:700;color:var(--muted);line-height:1.2}
+.due.soon{color:var(--red)}
+.arch{margin:6px 8px 10px}
+.arch-btn{display:block;margin:8px auto 4px;padding:8px 14px;border-radius:99px;font-size:13.5px;font-weight:700;color:var(--muted);background:var(--hover)}
+.arch-btn:hover{color:var(--ink)}
+.arch-btn[aria-expanded=true]{color:var(--ink)}
+.arch-list{list-style:none;margin:6px 0 0;padding:0;border-top:1px solid var(--line)}
+.arch-item{display:flex;align-items:flex-start;gap:4px;padding:0 2px 0 6px;border-bottom:1px solid var(--line);animation:in .3s var(--ease);transition:opacity .25s,transform .26s var(--ease)}
+.arch-item .check svg{width:24px;height:24px}
+.arch-item .check .box{stroke:var(--blue);opacity:1}
+.arch-item .check .fill{transform:scale(1)}
+.arch-item .check .tick{stroke-dashoffset:0}
+.arch-body{flex:1;min-width:0;padding:11px 0 9px;display:flex;flex-direction:column;gap:2px}
+.arch-item .title{cursor:default;font-size:15.5px;color:var(--muted);background-size:100% 1.6px}
+.arch-item time{font-size:12.5px;font-weight:650;color:var(--muted);opacity:.85}
+.arch-item.leaving{opacity:0;transform:translateX(12px)}
+.arch-item.leaving .check .fill{transform:scale(0)}
+.arch-item.leaving .check .tick{stroke-dashoffset:22}
+.lists-row .cchip[aria-checked=true]{background:var(--blue);color:#fff}
+.lists-row{margin-top:12px}
+#capChips{margin-top:8px}
+@media (min-width:761px){
+  .day{flex:1 1 270px;min-width:0}
+}
+@media (max-width:760px){
+  .view-overview .scroll{overflow:visible;flex:none}
+  .view-overview .day{min-height:auto}
+}
