@@ -30,9 +30,9 @@ Works in the iOS home-screen app too (it does not use Web Speech). The client pr
 Notes: iOS asks for microphone permission the first time (and may require a tap to start, so *Voice first* falls back to "tap the mic" when opened without a gesture). A web app **cannot launch Whisper Flow or switch keyboards**; if you prefer it, switch to its keyboard with the 🌐 key and dictate into the capture field. If the mic is blocked, the app shows how to re-enable it.
 
 ### Access
-The app is behind a simple password gate. The password is **`rohan`** (case-insensitive). You enter it once per device: the server sets a 1-year `httpOnly` cookie (`done_auth`, an HMAC of the password keyed with the `DONE_SECRET` env var) and the app remembers it in `localStorage` (`done.auth`). Every device sees the same list because tasks live server-side in Vercel Blob; there is no per-device sync step or prompt.
+The app is behind a simple password gate. The passcode is set via `APP_PASSCODE` (case-insensitive). You enter it once per device: the server sets a 1-year `httpOnly` cookie (`done_auth`, an HMAC of the password keyed with the `DONE_SECRET` env var) and the app remembers it in `localStorage` (`done.auth`). Every device sees the same list because tasks live server-side in Vercel Blob; there is no per-device sync step or prompt.
 
-All `/api/*` routes (`tasks`, `stats`, POST `transcribe`) require that cookie **or** the header `x-passcode: rohan` (also `Authorization: Bearer rohan`), which is how the assistant, the morning routine and any Scriptable widget talk to the API. Without either they return `401`. `POST /api/login {"password":"rohan"}` sets the cookie; `DELETE /api/login` logs out. Changing the password: set `APP_PASSCODE` (and optionally rotate `DONE_SECRET`, which logs everyone out) on Vercel and redeploy.
+All `/api/*` routes (`tasks`, `stats`, POST `transcribe`) require that cookie **or** the header `x-passcode` / `Authorization: Bearer` with the same value (set via `APP_PASSCODE`), which is how the assistant, the morning routine and any Scriptable widget talk to the API. Without either they return `401`. `POST /api/login {"password":"..."}` sets the cookie; `DELETE /api/login` logs out. Changing the password: set `APP_PASSCODE` (and optionally rotate `DONE_SECRET`, which logs everyone out) on Vercel and redeploy.
 
 ## Architecture
 

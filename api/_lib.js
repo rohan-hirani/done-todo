@@ -6,8 +6,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function sha(s) { return crypto.createHash('sha256').update(String(s)).digest(); }
 
 // ── password gate ────────────────────────────────────────────────────────────
-// Password (case-insensitive) is "rohan" (override with APP_PASSCODE). Browsers get a 1-year httpOnly cookie holding
-// HMAC(DONE_SECRET, password); scripts/assistant may send the header "x-passcode: rohan" instead.
+// Password (case-insensitive) is set via APP_PASSCODE. Browsers get a 1-year httpOnly cookie holding
+// HMAC(DONE_SECRET, password); scripts/assistant may send the header "x-passcode" instead.
 const PASSWORD = () => String(process.env.APP_PASSCODE || 'rohan').trim().toLowerCase();
 const COOKIE = 'done_auth';
 function token() { return crypto.createHmac('sha256', process.env.DONE_SECRET || 'dev-only-secret').update('done-v1:' + PASSWORD()).digest('hex'); }
