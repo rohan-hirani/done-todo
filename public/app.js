@@ -1045,7 +1045,17 @@ addEventListener('keydown', (e) => {
   // `/` always opens the first list's add box on desktop; `n` / letters keep the active list.
   const first = listIds()[0];
   const target = (document.activeElement && document.activeElement.closest && document.activeElement.closest('.day')?.dataset.key) || activeKey || first;
-  if (k === '/') { e.preventDefault(); quickAdd(isMobile() ? target : first); return; }
+  if (k === '/') {
+    e.preventDefault();
+    const key = isMobile() ? target : first;
+    // Defer focus so the `/` keydown cannot land as a character in the newly focused input.
+    requestAnimationFrame(() => {
+      quickAdd(key);
+      const inp = $(`.day[data-key="${key}"] .add input`, board);
+      if (inp && inp.value.startsWith('/')) inp.value = inp.value.replace(/^\/+/, '');
+    });
+    return;
+  }
   if (k === 'n' || k === 'N') { e.preventDefault(); quickAdd(target); return; }
   if (k.length === 1 && /\S/.test(k)) { e.preventDefault(); quickAdd(target, k); }
 });
