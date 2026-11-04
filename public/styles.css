@@ -410,12 +410,17 @@ html.needs-auth #gate{display:flex}
 .list-edit .primary{background:var(--lc,var(--blue))}
 @media (min-width:761px){.day.list-col h2{font-size:21px}}
 
-/* ── v9: inline quick-add row at the bottom of each list ── */
-.add.qa{flex:none;margin:4px 6px 6px;padding:0 2px 0 10px;border:0;border-radius:12px;background:transparent;transition:background .15s,box-shadow .15s}
+/* ── v9/v12: inline quick-add row at the top of each list (under the header) ── */
+.add.qa{flex:none;margin:2px 6px 10px;padding:0 2px 0 10px;border:0;border-radius:12px;background:transparent;transition:background .15s,box-shadow .15s}
 .add.qa:hover{background:var(--hover)}
 .add.qa:focus-within{background:var(--hover);box-shadow:inset 0 0 0 1.5px var(--lc,var(--blue))}
 .add.qa:focus-within .plus{color:var(--lc,var(--blue))}
 .add.qa input{padding:12px 0}
+/* Desktop: clear highlight on the list whose add box is focused (for / then ↑↓ navigation) */
+@media (min-width:761px){
+  .day.list-col.qa-focus{box-shadow:var(--shadow),inset 0 3px 0 var(--lc,var(--blue)),0 0 0 2px color-mix(in srgb,var(--lc,var(--blue)) 45%,transparent)}
+  .day.list-col.qa-focus .add.qa{background:var(--hover);box-shadow:inset 0 0 0 1.5px var(--lc,var(--blue))}
+}
 .qa-mic{flex:none;width:36px;height:36px;border-radius:50%;display:grid;place-items:center;color:var(--muted);opacity:.75;transition:opacity .15s,background .15s,color .15s}
 .qa-mic svg{width:18px;height:18px}
 .qa-mic:hover,.add.qa:focus-within .qa-mic{opacity:1;color:var(--red)}
@@ -506,7 +511,7 @@ img,svg{-webkit-user-drag:none}
   .day>header{padding:0 12px 6px 14px;min-height:44px;align-items:center}
   .list-name{min-height:40px}
   .task{margin:0 4px}
-  .add.qa{margin:6px 4px 8px;min-height:48px;background:var(--hover)}
+  .add.qa{margin:0 4px 10px;min-height:48px;background:var(--hover)}
   .add.qa:focus-within{background:var(--hover)}
   .add.qa input{padding:13px 0}
   .menu{padding:8px 8px calc(8px + env(safe-area-inset-bottom) * .4);animation:sheetUp .28s var(--ease)}

@@ -175,8 +175,8 @@ function buildBoard() {
     sec.dataset.key = c.id;
     sec.innerHTML = `<header title="Drag to reorder lists"><h2><button type="button" class="list-name" title="Rename or recolor this list"><i class="ldot" aria-hidden="true"></i><span class="lname"></span>${I_PEN}</button></h2><span class="sub"></span></header>
       <div class="scroll">
-        <ul class="list" role="list"></ul>
         <form class="add qa" autocomplete="off"><span class="plus" aria-hidden="true">+</span><input type="text" enterkeyhint="enter" maxlength="500" placeholder="Add a task…" autocapitalize="sentences" autocomplete="off"><button type="button" class="qa-mic" title="Dictate a task">${I_MIC}</button></form>
+        <ul class="list" role="list"></ul>
         <div class="arch" hidden>
           <button type="button" class="arch-btn" aria-expanded="false"></button>
           <ul class="arch-list" role="list" hidden></ul>
@@ -746,7 +746,7 @@ function onScroll() {
   });
 }
 
-/* ───────────── inline quick-add (one row at the bottom of every list) ───────────── */
+/* ───────────── inline quick-add (one row at the top of every list, under the header) ───────────── */
 function quickAdd(key, prefill = '') {
   const sec = $(`.day[data-key="${key}"]`, board) || $('.day', board);
   if (!sec) return;
@@ -757,12 +757,42 @@ function quickAdd(key, prefill = '') {
   revealAdd(inp.closest('.add'));
   if (prefill) inp.setSelectionRange(inp.value.length, inp.value.length);
 }
+function paintQaFocus() {
+  $$('.day.qa-focus', board).forEach((s) => s.classList.remove('qa-focus'));
+  if (isMobile()) return;
+  const a = document.activeElement;
+  if (!a || !a.matches || !a.matches('.add.qa input')) return;
+  const sec = a.closest('.day');
+  if (sec) sec.classList.add('qa-focus');
+}
+function moveQaFocus(delta) {
+  if (isMobile()) return false;
+  const a = document.activeElement;
+  if (!a || !a.matches || !a.matches('.add.qa input')) return false;
+  const secs = $$('.day', board);
+  const cur = a.closest('.day');
+  const i = secs.indexOf(cur);
+  if (i < 0) return false;
+  const next = secs[Math.max(0, Math.min(secs.length - 1, i + delta))];
+  if (!next || next === cur) return true;
+  const val = a.value;
+  const inp = $('.add input', next);
+  inp.value = val;
+  a.value = '';
+  quickAdd(next.dataset.key);
+  return true;
+}
 board.addEventListener('click', (e) => {
   const mic = e.target.closest('.qa-mic'); if (!mic) return;
   e.preventDefault();
   openCapture({ list: mic.closest('.day').dataset.key, mic: true });
 });
-board.addEventListener('focusin', (e) => { const sec = e.target.closest('.day'); if (sec && sec.dataset.key !== activeKey) setActive(sec.dataset.key); });
+board.addEventListener('focusin', (e) => {
+  const sec = e.target.closest('.day');
+  if (sec && sec.dataset.key !== activeKey) setActive(sec.dataset.key);
+  paintQaFocus();
+});
+board.addEventListener('focusout', () => requestAnimationFrame(paintQaFocus));
 
 /* ───────────── capture sheet ───────────── */
 const cap = { open: false, chip: 'none', custom: '', list: 'personal' };
@@ -998,6 +1028,13 @@ $('#micBtn').addEventListener('click', () => startVoice());
 addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const tag = (e.target.tagName || '').toLowerCase();
+  const inQa = !!(e.target.matches && e.target.matches('.add.qa input'));
+  // Desktop: ↑/↓ in a quick-add row jump to the previous/next list's add box (typed text moves with you).
+  if (inQa && !isMobile() && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+    e.preventDefault();
+    moveQaFocus(e.key === 'ArrowUp' ? -1 : 1);
+    return;
+  }
   if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) { if (e.key === 'Escape') e.target.blur(); return; }
   if (document.querySelector('dialog[open]') || !menu.hidden || cap.open) return;
   const k = e.key;
@@ -1005,8 +1042,11 @@ addEventListener('keydown', (e) => {
   if (k === '?') { $('#helpSheet').showModal(); return; }
   if (k === 'Escape') { closeSwipe(); return; }
   // Typing anywhere starts a task in the focused list's quick-add row (or the first list).
-  const target = (document.activeElement && document.activeElement.closest && document.activeElement.closest('.day')?.dataset.key) || activeKey || listIds()[0];
-  if (k === 'n' || k === 'N' || k === '/') { e.preventDefault(); quickAdd(target); return; }
+  // `/` always opens the first list's add box on desktop; `n` / letters keep the active list.
+  const first = listIds()[0];
+  const target = (document.activeElement && document.activeElement.closest && document.activeElement.closest('.day')?.dataset.key) || activeKey || first;
+  if (k === '/') { e.preventDefault(); quickAdd(isMobile() ? target : first); return; }
+  if (k === 'n' || k === 'N') { e.preventDefault(); quickAdd(target); return; }
   if (k.length === 1 && /\S/.test(k)) { e.preventDefault(); quickAdd(target, k); }
 });
 
@@ -1507,7 +1547,7 @@ $$('dialog.sheet').forEach((d) => {
 });
 
 // Keyboard: on iOS the keyboard covers the page instead of resizing it. While typing in the board, size the app
-// to the visible area so the quick-add row sits right above the keyboard, and keep the page itself from panning.
+// to the visible area so the focused quick-add row stays visible above the keyboard, and keep the page itself from panning.
 const isTyping = (el) => !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'color', 'date', 'range', 'button', 'submit'].includes(el.type)));
 function revealAdd(form) {
   if (!form) return;

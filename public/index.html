@@ -39,7 +39,7 @@
 <link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
-<link rel="stylesheet" href="/styles.css?v=11">
+<link rel="stylesheet" href="/styles.css?v=12">
 </head>
 <body>
 <div id="gate" class="gate" hidden>
@@ -204,7 +204,9 @@
 <dialog id="helpSheet" class="sheet">
   <h2>Keyboard shortcuts</h2>
   <dl class="keys">
-    <dt><kbd>n</kbd> <kbd>/</kbd> or any letter</dt><dd>Add a task to the current list</dd>
+    <dt><kbd>/</kbd></dt><dd>Focus the first list’s add box</dd>
+    <dt><kbd>↑</kbd> <kbd>↓</kbd> <small>in add box</small></dt><dd>Jump to previous / next list</dd>
+    <dt><kbd>n</kbd> or any letter</dt><dd>Add a task to the current list</dd>
     <dt><kbd>Enter</kbd></dt><dd>Add and keep going</dd>
     <dt><kbd>Esc</kbd></dt><dd>Leave the add row</dd>
     <dt><kbd>?</kbd></dt><dd>This help</dd>
@@ -219,6 +221,6 @@
   <div class="row"><button class="primary" data-close>Close</button></div>
 </dialog>
 
-<script type="module" src="/app.js?v=11"></script>
+<script type="module" src="/app.js?v=12"></script>
 </body>
 </html>
